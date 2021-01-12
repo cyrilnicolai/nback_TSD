@@ -11,6 +11,9 @@ source_rmd <- function(file, local = FALSE, ...){
   source(tempR, local = envir, ...)
 }
 
+
+hibou
+
 if (file.exists(f <- file.path(params$rootdir,'NodeKeys.csv')))   {
   allnodes <- read_csv(f,col_types = cols())
 } else {
