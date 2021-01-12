@@ -12,7 +12,6 @@ source_rmd <- function(file, local = FALSE, ...){
 }
 
 
-hibouuuU
 
 if (file.exists(f <- file.path(params$rootdir,'NodeKeys.csv')))   {
   allnodes <- read_csv(f,col_types = cols())
@@ -127,4 +126,5 @@ T_Complete <- function(orig) {
   print(p)
   
 }
+
 
