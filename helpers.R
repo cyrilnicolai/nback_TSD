@@ -12,7 +12,7 @@ source_rmd <- function(file, local = FALSE, ...){
 }
 
 
-hibou
+hibouuu
 
 if (file.exists(f <- file.path(params$rootdir,'NodeKeys.csv')))   {
   allnodes <- read_csv(f,col_types = cols())
