@@ -1,0 +1,521 @@
+---
+title: "Extracting data for n-back"
+params: 
+  ExperimentID: [15096,16303]
+  rootdir: /home/user/Desktop/Documents/TimeSocialDistancing
+output:
+  html_document: 
+    df_print: paged
+    toc: yes
+  html_notebook:
+    code_folding: hide
+    toc: yes
+---
+
+```{r setup, include= FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = F)
+```
+
+```{r, include= F}
+library(tidyverse)
+source('helpers.R')
+library(rmarkdown)
+library(stringr)
+```
+
+
+#Read and Describe Data
+```{r}
+##Extracting 1-Back
+
+datadir = file.path(params$rootdir,paste0('data_exp_', paste(params$ExperimentID,collapse='-'), '_', ExperimentName[1]))
+outdir = paste(datadir,'processed',sep='_')
+dir.create(outdir,showWarnings = F)
+ExperimentID <- params$ExperimentID
+
+
+datafiles <- list.files(datadir,'S1_1back_r.*.csv',full.names = T)
+tmpdir <- file.path(params$rootdir,'.tmp')
+unlink(tmpdir,recursive=T)
+if (is_empty(datafiles)){
+  print('No 1back data')
+  knitr::knit_exit()
+}
+
+orig1back <- T_read(datafiles) %>%
+  mutate(Run = as.factor(str_replace(File,'S._1back_r(.).csv','\\1'))) 
+
+
+##Extracting 3-Back
+
+
+datafiles <- list.files(datadir,'S1_3back_r.*.csv',full.names = T)
+tmpdir <- file.path(params$rootdir,'.tmp')
+unlink(tmpdir,recursive=T)
+if (is_empty(datafiles)){
+  print('No 3back data')
+  knitr::knit_exit()
+}
+
+orig3back <- T_read(datafiles) %>%
+  mutate(Run = as.factor(str_replace(File,'S._3back_r(.).csv','\\1'))) 
+```
+
+#Select and modify columns of interest and merge 1-back and 3-back
+```{r}
+Orig1back = orig1back %>%
+  filter(str_detect(display, "block1back")) %>%
+  select(Correct, ILI,`Reaction Time`,PID,`Zone Type`, duration, Response, Run, randomise_blocks, Attempt,  `UTC Timestamp`) %>%
+  mutate(nback = "1back",
+         `UTC Timestamp`= as.character(`UTC Timestamp`)) %>%
+  rename(Participant.Private.ID = PID,
+         Zone.Type = `Zone Type`,
+         UTC.Timestamp = `UTC Timestamp`,
+         Reaction.Time = `Reaction Time`)
+
+Orig3back = orig3back %>%
+  filter(str_detect(display, "block3back")) %>%
+  select(Correct, ILI,`Reaction Time`,PID,`Zone Type`, duration, Response, Run, randomise_blocks, Attempt,  `UTC Timestamp`) %>%
+  mutate(nback = "3back",
+         `UTC Timestamp`= as.character(`UTC Timestamp`)) %>%
+  rename(Participant.Private.ID = PID,
+         Zone.Type = `Zone Type`,
+         UTC.Timestamp = `UTC Timestamp`,
+         Reaction.Time = `Reaction Time`)
+
+OrigNback <- bind_rows(Orig1back, Orig3back) %>%
+  mutate(ILI = as.factor(ifelse(ILI  == 1500, "1500ms", "1800ms")),
+         duration = as.factor(duration),
+         timestamp = as.numeric(UTC.Timestamp),
+condition = ifelse(duration == "45s" & nback == "1back" & ILI == "1500ms", 1, 0),
+         condition = ifelse(duration == "90s" & nback == "1back" & ILI == "1500ms", 2, condition),
+         condition = ifelse(duration == "45s" & nback == "1back" & ILI == "1800ms", 3, condition),
+         condition = ifelse(duration == "90s" & nback == "1back" & ILI == "1800ms", 4, condition),
+         condition = ifelse(duration == "45s" & nback == "3back" & ILI == "1500ms", 5, condition),
+         condition = ifelse(duration == "90s" & nback == "3back" & ILI == "1500ms", 6, condition),
+         condition = ifelse(duration == "45s" & nback == "3back" & ILI == "1800ms", 7, condition),
+         condition = ifelse(duration == "90s" & nback == "3back" & ILI == "1800ms", 8, condition))
+```
+
+#Confinement tracker verifications
+```{r}
+datafiles <- list.files(datadir,'S1_ConfinementTrack_r.*.csv',full.names = T)
+tmpdir <- file.path(params$rootdir,'.tmp')
+unlink(tmpdir,recursive=T)
+if (is_empty(datafiles)){
+  print('No 3back data')
+  knitr::knit_exit()
+}
+
+ConfTrack <- T_read(datafiles) %>%
+  mutate(Run = as.factor(str_replace(File,'S._3back_r(.).csv','\\1'))) %>%
+  select(`Participant Private ID`, `Run`, `Question Key`, `Response`, `UTC Timestamp`)
+
+
+countID <- ConfTrack %>% 
+  filter(`Question Key` %in% 'ConfStage' | `Question Key` %in% 'ConfStage-2') %>%  
+    group_by(Run) %>%
+    summarise(n1back = n())
+countID
+
+ConfTrack %>%
+  filter(`Question Key` %in% 'ConfStage' | `Question Key` %in% 'ConfStage-2') %>% 
+  group_by(Response) %>%
+  summarise(n = n())
+
+tracker <- ConfTrack %>%
+  filter(`Question Key` %in% 'ConfStage' | `Question Key` %in% 'ConfStage-2') %>% 
+  filter(Response == "pendant") %>%
+  rename(ID = `Participant Private ID`) %>%
+  select(ID)
+
+
+#OrigNback 375,233 rows and 396 participants
+OrigNback %>% 
+  count(Participant.Private.ID, Run) %>%
+  group_by(Run) %>%
+  summarise(n = n())
+  
+OrigNback <- OrigNback %>%
+  filter(Participant.Private.ID %in% tracker$ID)
+
+OrigNback %>%    #357 000 rows and 362 participants  (loss of 24 participants in Run1 and 1 in Run 2)
+  count(Participant.Private.ID, Run) %>%
+  group_by(Run) %>%
+  summarise(n = n())
+
+```
+
+
+
+
+#Retrospective / prospective
+```{r}
+#add a column "block number" identifying each trial of session 1
+#keep only first Run 1 for participants that did 2 or 3 Run1
+
+OrigNback <- OrigNback %>%
+  mutate(end = `Zone.Type` == "response_rating_scale_likert",
+         block_nb = cumsum(end),
+         block_nb = ifelse(end == T, block_nb - 1, block_nb)) %>%
+  select(-end)
+
+
+retrosp <- OrigNback %>%
+  group_by(Participant.Private.ID, Run, condition) %>%
+  filter(!is.na(condition)) %>%
+  summarise(block_nb = first(block_nb), UTC.Timestamp = first(UTC.Timestamp)) %>%
+  group_by(Participant.Private.ID) %>%
+  dplyr::slice(which.min(UTC.Timestamp))
+
+OrigNback <- OrigNback %>%
+  mutate(retro.pro = ifelse(
+    block_nb %in% retrosp$block_nb, "retrospective",  "prospective"))
+  
+
+OrigNback %>%
+  group_by(block_nb) %>%
+  summarise(retro.pro = first(retro.pro)) %>%
+  count(retro.pro)
+#381 first an thus retrospective task
+
+```
+
+#Count number of Participants and tasks carried out
+```{r}
+
+  
+#Count Participants
+countID1back <- Orig1back %>% 
+  count(Participant.Private.ID,Run, nback) %>%
+  group_by(Run) %>%
+  summarise(n1back = n())
+
+countID3back <- Orig3back %>% 
+  count(Participant.Private.ID,Run, nback) %>%
+  group_by(Run) %>%
+  summarise(n3back = n())
+
+countIDNback <- OrigNback %>% 
+  count(Participant.Private.ID, Run)%>%
+  group_by(Run) %>%
+  summarise(nOverall = n()) 
+  
+table_countID <- left_join(countID1back, countID3back)
+table_countID <- left_join(table_countID, countIDNback)
+paged_table(table_countID)
+
+
+#count different participants that took part in the session 1
+count_participant <- OrigNback %>% 
+  group_by(Participant.Private.ID) %>%
+  summarise(n = n())
+count_participant  #388 participants
+
+
+#Count tasks
+
+OrigNback %>%
+  count(block_nb) #4283
+```
+
+
+```{r}
+#list of participants to remove --> some participants logged twice or 3 x with a different login
+#removing which participants ID that we don't want
+participants_to_rm = c("1377295", "1373766", "1347792", "1358571","1348787","1318460",  "1347194", "1366463", "1330740", "1314652")
+OrigNback<- OrigNback %>%
+  filter(!(Participant.Private.ID %in% participants_to_rm))
+
+
+OrigNback %>%
+  count(block_nb) #4283 --> 4246 (without participant to remove)
+
+OrigNback %>%
+  count(Participant.Private.ID)   #388 --> 383 participants
+
+```
+
+
+#Deal with attempts
+```{r}
+
+##keyboard response Attempts
+Table_Attempts <- OrigNback %>%  
+  group_by(Attempt) %>%
+  count() %>%
+  filter(as.numeric(Attempt) <10)
+paged_table(Table_Attempts)
+# ~13 000 out of ~160 000    #8%
+
+OrigNback <- OrigNback %>%            #removing all responses with more than one Attempt
+  filter( Zone.Type != "response_keyboard" | Attempt %in% c("1", NA))
+#~375000 obs --> 344200 obs
+
+
+##Response text entry and likert Attempts
+
+OrigNback %>% 
+  filter(Zone.Type == "response_rating_scale_likert") %>%
+  group_by(Attempt) %>%
+  count()
+#only one Attempts
+
+OrigNback %>% 
+  filter(Zone.Type == "response_text_entry") %>%
+  group_by(Attempt) %>%
+  count()
+#19 responses with more than 1 Attempts
+
+entry_attempt <- OrigNback %>% 
+  filter(Zone.Type == "response_text_entry" & Attempt > 1) 
+  
+  OrigNback %>% 
+    filter(Zone.Type == "response_text_entry") %>%
+    filter(Participant.Private.ID %in% entry_attempt$Participant.Private.ID
+           & nback %in% entry_attempt$nback 
+           & randomise_blocks %in% entry_attempt$randomise_blocks )
+#the responses for both attempts are identical --> keep the first one
+  
+  
+  OrigNback <- OrigNback %>%            #removing all responses with more than one Attempt
+  filter( Zone.Type != "response_text_entry" | Attempt %in% c("1", NA))
+  
+  
+
+
+
+```
+
+#Number of responses
+```{r}
+OrigNback %>%
+  group_by(block_nb, .add = T) %>%
+  filter(Response %in% c("Left", "Down")) %>%
+  summarise(n= n(), duration = first(duration)) %>%
+  group_by(duration) %>%
+  group_by(n, .add = T) %>%
+  summarise(nn = n())
+
+number_resp = OrigNback %>%
+   group_by(duration, ILI, nback) %>%
+  group_by(block_nb, .add = T) %>%
+  filter(Response %in% c("Left", "Down")) %>%
+  summarise(n = n(), duration = first(duration))
+
+
+number_resp %>%
+  filter(!is.na(duration)) %>%
+  ggplot(aes(n, group = duration, colour = duration)) +
+  facet_grid(duration~ILI) +
+           geom_histogram(position = "dodge", binwidth=1,
+                   colour = "black" , fill="white") +
+  labs(y = "count", x = "Number of Responses", title ="Number of responses (Down or Left) for 45s and 90s tasks") +
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
+  # scale_x_continuous(limits = c(0, 70), breaks = seq(from = 0, to = 70, by = 5))
+
+#some task have 2 times or 3 times more responses than expected
+```
+
+```{r}
+
+nbresp <- OrigNback %>%
+  filter(Zone.Type == "response_keyboard") %>%
+  select(block_nb, condition) %>%
+    group_by(block_nb) %>%
+summarise(n = n(),condition = first(condition))
+
+blocktorm15 <- nbresp %>%
+  filter(condition == 5 | condition == 1) %>%
+  filter(is.na(block_nb) | n > 65)
+
+blocktorm26 <- nbresp %>%
+  filter(condition == 6 | condition == 2) %>%
+  filter(is.na(block_nb) | n>125)
+
+blocktorm37 <- nbresp %>%
+  filter(condition == 3 | condition == 7) %>%
+  filter(is.na(block_nb) | n > 57)
+
+blocktorm48 <- nbresp %>%
+  filter(condition == 4 | condition == 8) %>%
+  filter(is.na(block_nb) | n>107)
+
+blocktorm <- bind_rows(blocktorm15, blocktorm26, blocktorm37, blocktorm48) #6 blocks
+
+
+OrigNback <- OrigNback %>%
+  filter(!(block_nb %in% blocktorm$block_nb))
+
+blocknb <-OrigNback %>%
+  group_by(block_nb) %>%
+  summarise(n = n()) 
+blocknb
+#4240 trials
+
+
+```
+
+
+
+
+
+
+##Filtering and formatting data
+```{r}
+
+# Remove excess tasks (for duration estimation and likert response columns)
+first_trial <- OrigNback %>%   #3932 tasks
+  filter(Zone.Type == "response_text_entry") %>%
+  group_by(Participant.Private.ID) %>%
+  group_by(nback, .add =T) %>%
+  group_by(Run, .add =T) %>%
+  group_by(randomise_blocks, .add =T) %>%
+  dplyr::slice(which.min(UTC.Timestamp)) %>%
+  select(block_nb)
+
+
+trials_to_rm <- setdiff(blocknb$block_nb, first_trial$block_nb)  #309 observations
+
+OrigNback <- OrigNback %>%
+        filter(!(block_nb %in% trials_to_rm))  #342966 --> 318449 observations
+
+
+
+#merge entry response (likert scale and duration estimation) with other responses
+df1 <- OrigNback %>% 
+  filter(Zone.Type == "response_keyboard") %>%
+  select(-UTC.Timestamp,-Zone.Type) 
+
+df2 <-OrigNback %>% 
+  filter(Zone.Type == "response_text_entry" | Zone.Type == "response_rating_scale_likert") %>% 
+  select(-UTC.Timestamp, - Reaction.Time, - Attempt, -retro.pro, -timestamp, -UTC.Timestamp) %>% 
+  mutate(Response = as.character(Response)) %>% 
+  pivot_wider(values_from = Response, names_from = Zone.Type) 
+
+
+Nback <- left_join(df1, df2, by = c("Participant.Private.ID", "nback", "randomise_blocks", "Run", "block_nb")) %>%
+  select(-Correct.y, - duration.y, -ILI.y, - condition.y) %>%
+  filter(!is.na(response_text_entry)) %>%
+  rename(duration = duration.x, 
+         ILI = ILI.x, 
+         Correct = Correct.x,
+         condition = condition.x,
+         response_arrow = Response,
+         likert = response_rating_scale_likert) %>%
+mutate(Run = as.factor(Run),
+  likert = fct_relevel(likert, "Très lentement", "Lentement", "Normalement", "Rapidement", "Très rapidement"))
+
+
+Nback %>% 
+  group_by(Participant.Private.ID) %>%
+  summarise(n = n())
+blocks <- Nback %>% 
+  group_by(block_nb) %>%
+  summarise(n = n())
+
+
+blockswithnoresps <- setdiff(first_trial$block_nb, blocks$block_nb)
+#370 participants + 3850 blocks   (blocks with no responses (~80))
+#participants who did not make an estimate have been removed
+```
+
+
+
+
+
+
+##translating subjective duration estimates and add them to Nback
+```{r}
+
+blocknb <- Nback %>%
+  group_by(block_nb) %>%
+  summarise(n = n()) 
+blocknb
+#3850 trials
+
+##formatting and translating subjective duration estimates
+
+#getting rid of spaces, punctuation, "::" and words that beginning by "m" (for minutes)
+subj_duration = OrigNback %>% filter(Zone.Type == "response_text_entry") %>% 
+  select(Participant.Private.ID, Response, Run, randomise_blocks, nback) %>% 
+  mutate(Response = str_to_lower(as.character(Response)),
+          Response = str_replace_all(Response, regex("m([a-z]{0,})"), ":"),
+          Response = str_replace_all(Response, regex("[:punct:]"), ":"),
+          Response = str_replace_all(Response, regex("[:space:]"), ""),
+          Response = str_replace_all(Response, "::", ":"))
+
+subj_duration1 <- subj_duration %>% 
+  mutate(translated = strtoi(
+    as.difftime(Response, format = "%M:%S", units = "sec")))  #recognize duration with format (mm:ss)
+
+subj_duration2 <- subj_duration1 %>% 
+  filter(is.na(translated)) %>%   #among duration not yet translated
+  mutate(translated = ifelse(
+    str_detect(Response, regex("(\\d{1,2})s([a-z]{0,})")),     #if two digit only, recognize them as (ss)
+     strtoi(as.difftime(Response, format = c("%S"), units = "sec")),
+    NA)) 
+subj_duration3 <- subj_duration2 %>% 
+  filter(is.na(translated)) %>%   #among duration not yet translated
+  mutate( translated = ifelse(
+    str_detect(Response, regex("\\d{4}")),    #if series of 4 digits, recognize them as (mmss)
+     strtoi(as.difftime(Response, format = c("%M%S"), units = "sec")),
+    NA)) 
+subj_duration4 = subj_duration3 %>% 
+  filter(is.na(translated)) %>%  #among duration not yet translated
+  mutate( translated = ifelse(          
+   parse_number(Response) < 9,                #if only one digit <9, recognize them as (m)
+     strtoi(as.difftime(Response, format = c("%M"), units = "sec")),
+    NA))
+subj_duration5 = subj_duration4 %>% 
+  filter(is.na(translated)) %>%  #among duration not yet translated
+  mutate(translated = parse_number(Response)) #extract only the number from the string
+
+#merge each dataframe with their translated values
+subj_duration = full_join(subj_duration1, subj_duration2, copy = F) %>% filter(!is.na(translated))
+subj_duration = full_join(subj_duration, subj_duration3, copy = F) %>% filter(!is.na(translated))
+subj_duration = full_join(subj_duration, subj_duration4, copy = F) %>% filter(!is.na(translated))
+subj_duration = full_join(subj_duration, subj_duration5, copy = F) %>%
+  mutate(translated = ifelse(translated < 500 & translated > 9, translated, NA)) %>%   
+  mutate(Run = as.factor(Run))
+
+#get the duration estimation that ave strange formats and translate them manually 
+no_translated = subj_duration  %>% 
+  filter(is.na(translated)) %>% 
+  write_csv(file.path(outdir,'no_translated.csv'))     #75 no translated 
+
+#merge subj_duration with Nback ==> add translated estimates
+Nback <- left_join(Nback, subj_duration, by = c("Participant.Private.ID", "Run", "nback", "randomise_blocks")) %>%
+  filter(!is.na(translated))   
+
+Nback <- Nback %>% select(Participant.Private.ID, nback, Run, block_nb, ILI, duration, condition, likert, response_text_entry, translated, Reaction.Time, response_arrow, Correct, timestamp, retro.pro) %>%
+  write_csv(file.path(outdir,'S1_nback.csv'))
+
+paged_table(Nback)  #133232
+
+#Count overall number of trials (8 trials per Run per Participants ) #3850 --> 3785 (75 responses not translated)
+
+Nback_blocks <- Nback %>%
+  group_by(Participant.Private.ID) %>%
+  group_by(nback, .add = T) %>%
+  group_by(Run, .add = T) %>%
+  group_by(duration, ILI, .add = T) %>%
+  summarise(likert = first(likert), 
+            translated = first(translated),
+            block_nb = first(block_nb)) %>%
+  ungroup()
+
+paged_table(Nback_blocks)
+
+ 
+#take a look at NA for text entry and likert
+block_NA_list <- Nback_blocks %>%
+  filter(is.na(translated) | is.na(likert)) 
+
+paged_table(block_NA_list)
+```
+
+
+
+
+

@@ -1,0 +1,1378 @@
+---
+title: "longitudinal_analysis"
+
+params:
+  experimentID:
+  - 15096
+  - 16303
+  rootdir: /home/user/Desktop/Documents/TimeSocialDistancing
+output:
+  html_notebook:
+    code_folding: hide
+    toc: yes
+  html_document:
+    df_print: paged
+    toc: yes
+    number_sections: yes
+    toc_depth: 2
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+always_allow_html : yes
+---
+```{r setup, include= FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = F)
+```
+
+```{r, include= F}
+
+library(tidyverse)
+library(rmarkdown)
+# library(ggpubr)
+library(viridis)
+library(cowplot)
+library(RColorBrewer)
+# library(R.utils)
+
+library(lme4)
+library(lmtest)
+library(emmeans)
+library(stargazer)
+# library(ggeffects)
+# library(psycho)
+
+# library(factoextra)
+# library(NbClust)
+# library(cluster)
+# library(moments)
+library(ordinal)
+```
+
+```{r, include= F}
+## Standard Error of the Mean (SEM)
+ #+10 ms bruit gorilla
+semg <- function(x, na.rm=FALSE) {
+     if(na.rm==TRUE) x <- na.omit(x)
+     sd(x)/sqrt(length(x)) + 0.01
+}
+sem <- function(x, na.rm=FALSE) {
+     if(na.rm==TRUE) x <- na.omit(x)
+     sd(x)/sqrt(length(x)) 
+}
+
+##coefficent of variation
+cv <- function(x){sd(x)/mean(x)}
+
+#Z-score
+z_score <- function(x){(x - mean(x)) / sd(x)}
+
+
+## Outliers removal
+remove_outliers <- function(x, na.rm = TRUE, ...) {
+qnt <- quantile(x, probs = c(.25, .75), na.rm = na.rm, ...)
+H <- 1.5 * IQR(x, na.rm = na.rm)
+Y <- x
+Y[x < (qnt[1] - H)] <- NA
+Y[x > (qnt[2] + H)] <- NA
+Y}
+```
+
+```{r, include= F}
+#Palettes of colours
+cbPalette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442",
+               "#0072B2", "#D55E00", "#CC79A7")
+
+cbPalette2 <- c("#0072B2", "#CC79A7")
+
+cbPalette2_v2 <- c("#66c2a4", "#fc8d59")
+
+cbPalette4 <- c( "#56B4E9", "#009E73", "#E69F00", "#D55E00", "#CC79A7")
+
+cbPalette5 <- c( "#CC79A7", "#009E73")
+```
+
+
+
+
+#Extracting and merge data from S1 and S3
+```{r}
+# Extracting S1
+
+datadir <- "data_exp_15096-16303_FR_processed"
+datafiles <- list.files(datadir,'S1_nback.csv',full.names = T)
+
+S1_Nback <- read.csv2(datafiles[1], sep = ",") %>%
+  mutate(session = "S1",
+         ID = as.character(Participant.Private.ID)) %>%
+  filter(retro.pro == "prospective") 
+  #remove first trials from session 1 because they are retrospective tasks 
+#133232 overall # of observation --> we keep  121253 observations
+
+
+# Extracting S2  (not used here because not reliable)
+# 
+# datadir <- "data_exp_16085_FR_processed"
+# datafiles <- list.files(datadir,'S2_nback.csv',full.names = T)
+# 
+# S2_Nback <- read.csv2(datafiles[1], sep = ",") %>%
+#   mutate(session = "S2",
+#          ID = as.character(Participant.Private.ID))  %>%
+#   mutate(response_arrow = Response)
+# #30693 observations
+
+
+#Extracting S3
+
+datadir <- "data_exp_16143_FR_processed"
+datafiles <- list.files(datadir,'S3_nback.csv',full.names = T)
+
+S3_Nback <- read.csv2(datafiles[1], sep = ",") %>%
+  mutate(session = "S3",
+         ID = as.character(Participant.Private.ID))  
+# 37081 observations
+
+
+
+##Number of participants
+
+# Session 1: 365 participants
+S1participants <- S1_Nback %>%
+  group_by(ID) %>%
+  summarise(session = first(session)) %>% 
+  pivot_wider(names_from = session, values_from = session)
+
+# Session 2: 58 participants
+# S2participants <- S2_Nback %>%
+#   group_by(ID) %>%
+#   summarise(session = first(session)) %>% 
+#   pivot_wider(names_from = session, values_from = session)
+
+# Session 2: 56 participants
+S3participants <- S3_Nback %>%
+  group_by(ID) %>%
+  summarise(session = first(session)) %>% 
+  pivot_wider(names_from = session, values_from = session)
+
+
+
+#Merging two sessions, keep only subjects that took part in S1 & S3
+S1_Nback <- S1_Nback %>%
+  filter(ID %in% S3_Nback$ID) # 21 483 observations
+S3_Nback <- S3_Nback %>%
+  filter(ID %in% S1_Nback$ID) # 28 974 observations
+
+NbackL <- bind_rows(S1_Nback, S3_Nback)  #50457 observations
+
+
+participants <- NbackL %>%
+  group_by(ID, session) %>%
+  summarise(block_nb = first(block_nb)) %>% 
+  select(-block_nb) %>%
+  pivot_wider(names_from = session, values_from = session)
+
+participants <- participants %>% filter(!is.na(S3) & !is.na(S1))
+participants   
+
+# 39 participants with data from S1 and S3 
+# 41 participants with data from S1 and S2 (instead of 58)
+# 19 participants across the three sessions
+
+
+#number of tasks
+blocknb <- NbackL %>%                        #1336 trials
+  group_by(ID, session, block_nb) %>%
+  summarise(n = n())
+blocknb
+
+
+#Is run 1 of each subject was recorded for both sessions ?
+NbackL %>%
+  group_by(ID, session, Run, block_nb) %>%
+  summarise() %>%
+  pivot_wider(names_from = c("session", "Run"), values_from = block_nb)
+
+```
+
+
+
+# Create two clean dataset, one in which each row is a different trial (NbackL_blocks),
+# another in which each row is a participant response (Nback_all)
+```{r}
+
+# Each row is a participant response 
+# Defining if the letter is a target letter and if an answer is a hit, a correct reject, a miss or a false alarm.
+NbackL_all <- NbackL %>%           #50457 obs
+   filter(!is.na(translated)) %>%
+         mutate(ID = as.factor(ID),
+         correct.reject = ifelse(response_arrow == "Down" & Correct == TRUE, 1, 0),    
+         miss = ifelse(response_arrow == "Down" & Correct == FALSE, 1, 0),
+         hit = ifelse(response_arrow == "Left" & Correct == TRUE, 1, 0),
+         false.alarm = ifelse(response_arrow == "Left" & Correct == F, 1, 0),
+         target = ifelse(hit == 1 | miss == 1, "target", "non-target"))
+
+
+#From the subjective duration estimation (SD) and the objective task duration (OD), defining:
+#Duration deviation = SD - OD
+#Relative duration = SD/OD
+#Relative deviation = (SD - OD)/OD
+NbackL_all <- NbackL_all %>% 
+    mutate(duration_deviation = translated - parse_number(as.character(duration)), 
+           relative_deviation = (translated - parse_number(as.character(duration)))/ parse_number(as.character(duration)),
+         relative_duration = translated / parse_number(as.character(duration)))
+
+
+#paradigmatic threshold on RT: every correct response that took less than 200ms is discarded
+mRT <- NbackL_all %>% 
+  mutate(Reaction.Time = as.numeric(as.character(Reaction.Time))) %>%
+  filter(Correct == T) %>%  
+  filter(Reaction.Time > 200) %>% # 1200 out of 42500 correct observations --> 3%
+  group_by(block_nb) %>%
+summarize(mRT = mean(as.numeric(as.character(Reaction.Time))))
+
+# Each row is a different trial
+NbackL_blocks <- NbackL_all %>%    #1336 trials
+  group_by(ID) %>%
+  group_by(session, .add =T) %>%
+  group_by(Run, .add = T) %>%
+  group_by(nback, .add =T) %>%
+  group_by(ILI, duration, block_nb, .add = T) %>%
+  summarise(condition = first(condition),
+            likert = first(likert),
+            translated = first(translated),
+            duration_deviation = first(duration_deviation),
+            relative_duration = first(relative_duration),
+            relative_deviation = first(relative_deviation),
+            HR = mean(hit),
+            FAR = mean(false.alarm),
+            CRR = mean(correct.reject),
+            MR = mean(miss),
+            perf = sum(hit) + sum(correct.reject)) %>%
+  ungroup() 
+
+# %Correct (perf) = Hit Rate + Correct rejection Rate / number of letters displayed during the trial
+NbackL_blocks <- NbackL_blocks %>%
+  mutate(perf = ifelse(
+    duration == "45s" & ILI == "1500ms" , perf/30, perf),
+ perf = ifelse(
+    duration == "45s" & ILI == "1800ms" , perf/25, perf),
+ perf = ifelse(
+    duration == "90s" & ILI == "1500ms" , perf/60, perf),
+  perf = ifelse(
+    duration == "90s" & ILI == "1800ms" , perf/50, perf),
+  likert = fct_relevel(likert, "Très lentement", "Lentement",  "Normalement", "Rapidement", "Très rapidement"),
+  likert_n = as.factor(recode(likert, "Très lentement" = -2, "Lentement" = -1, "Normalement" = 0, "Rapidement" = 1, "Très rapidement" = 2)),
+ session = as.factor(session))
+
+
+NbackL_blocks <- left_join(NbackL_blocks, mRT)
+paged_table(NbackL_blocks) #1336 trials
+
+```
+
+
+
+
+# OUTLIERS: Removing |z_score| > 2 (2 standard deviation from the mean) on subjects' performance and duration estimation + paradigmatic threshold               #1336 --> 1149 trials (187 outliers ~ 14 %)
+```{r}
+#Outliers: duration estimation
+
+NbackL_blocks <- NbackL_blocks %>%
+  group_by(session, duration) %>%
+  mutate(z_score = scale(duration_deviation))
+
+estimation_outliers <- NbackL_blocks %>%
+filter(abs(z_score) >= 2)    #84 outliers (~6 %)
+  
+# NbackL_blocks %>%
+#   ggplot() + geom_histogram(mapping = aes(z_score)) +
+#   facet_grid(session ~ duration)
+
+NbackL_blocks <-  NbackL_blocks %>%        #1336 -> 1252 trials
+filter(abs(z_score) < 2 )
+
+# NbackL_blocks %>%
+  # ggplot() + geom_histogram(mapping = aes(z_score))+
+  # facet_grid(session ~ duration)
+
+
+
+#Outliers: Performance (perf = correct response rate)
+
+NbackL_blocks <- NbackL_blocks %>%
+  group_by(session, nback) %>%
+  mutate(z_score2 = scale(perf))
+
+perf_outliers <- NbackL_blocks %>%  #72 outliers (~6 %)
+filter(abs(z_score2) >= 2) 
+
+# NbackL_blocks %>%
+  # ggplot() + geom_histogram(mapping = aes(z_score2)) +
+  # facet_grid(session ~ nback)
+
+NbackL_blocks <-  NbackL_blocks %>%      #1252 -> 1180
+filter(abs(z_score2) < 2) %>%
+  select(-z_score, -z_score2)
+
+
+
+# paradigmatic thresholds on duration estimation: 
+#the estimate has to be in the interval [1/6* Task duration ; 2* Task duration]
+
+paradigm_outliers <- NbackL_blocks %>%   # 31 outliers (~3%)
+  filter(translated <= (1/6) * parse_number(as.character(duration)) | translated >= 2* parse_number(as.character(duration)))
+
+NbackL_blocks <- NbackL_blocks %>%       # 1180 -> 1149 trials
+  filter(translated > (1/6) * parse_number(as.character(duration)) & translated < 2* parse_number(as.character(duration)))
+```
+
+
+   
+#Distribution of the duration deviation
+```{r}
+# jpeg("DistribDD1backS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+NbackL_blocks %>%
+  ggplot(aes(duration_deviation)) + 
+  facet_grid(nback~duration) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=1,
+                   colour = "black" , fill="white") + 
+      geom_density(aes(y = ..density..*(600 * 5)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "Duration Deviation", title ="Distribution of duration deviation for different conditions") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = -90, to = 60, by = 15),
+  limits = c(-90, 70))
+# dev.off()
+
+
+# jpeg("DistribDDL.jpg", width = 4000, height = 2500, units = "px",res=600)
+NbackL_blocks %>%
+  ggplot(aes(duration_deviation)) + 
+  facet_grid(.~duration) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=1,
+                   colour = "black" , fill="white") + 
+      geom_density(aes(y = ..density..*(6000 * 1)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "Duration Deviation", title ="Distribution of duration deviation for different task durations") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = -90, to = 60, by = 15),
+  limits = c(-90, 70))
+# dev.off()
+
+
+# jpeg("DistribSDL.jpg", width = 4000, height = 2500, units = "px",res=600)
+NbackL_blocks %>%
+  ggplot(aes(translated)) + 
+  facet_grid(.~duration) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=1,
+                   colour = "black" , fill="white") + 
+      geom_density(aes(y = ..density..*(4000 * 1)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "Subjective duration", title ="Distribution of Subjective duration for different task durations") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 180, by = 30),
+  limits = c(0, 180))
+# dev.off()
+
+```
+
+#Distribution of the Correct response rate (perf) 
+# %correct = Hit Rate + Correct Rejection Rate
+```{r}
+ perf_1back <-  NbackL_blocks %>%
+  # filter(Run == 1) %>%
+  filter(nback == "1back") 
+ perf_3back <-  NbackL_blocks %>%
+   # filter(Run == 1) %>%
+  filter(nback == "3back") 
+ 
+
+ # QQ plot
+ title <- ggdraw() + 
+   draw_label("Normal QQ plot of %correct for 1-back and 3-back",
+    fontface = 'bold', size = 13) +
+  theme(plot.margin = margin(0, 0, 15 ,0))
+
+plot_row = plot_grid(ggqqplot(perf_1back$perf, size = 0.2),
+                     ggqqplot(perf_3back$perf, size = 0.2), 
+                     nrow=1, labels=c('1-back', '3-back'),
+  label_size = 11,
+  hjust = -0.5, vjust = -0.5)
+          
+# jpeg("QQplotperfS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+  plot_grid(
+  title, plot_row,
+  ncol = 1,
+  rel_heights = c(0.1, 1)
+)
+# dev.off()
+
+ 
+#shapiro-wilk test  H0 = normal
+shapiro.test(perf_1back$perf)
+shapiro.test(perf_3back$perf)
+
+# jpeg("DistribperfL.jpg", width = 4000, height = 2500, units = "px",res=600)
+NbackL_blocks %>%
+  # filter(Run == 1) %>%
+  # filter(perf > 0.25) %>%
+  ggplot(aes(perf)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") + 
+      geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "%Correct (HR + CRR)", title ="Correct response rate Distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1.01, by = 0.1),
+                 limits = c(0,1.01))
+ # dev.off()
+
+#the two distribution are skewed ! + ceiling effect for 1back
+```
+
+#N-back Performance table and N-Back Performance Graphs
+```{r}
+
+#N-back Performance table
+perfNback <- NbackL_blocks %>%
+  filter(!is.na(mRT)) %>%
+  group_by(session, nback) %>%
+  summarise(perf = mean(perf),
+            mRT = mean(mRT),
+            FAR = mean(FAR))
+
+semperf <- aggregate(perf ~ session + nback,NbackL_blocks, sem)  #apply sem function (with gorilla uncertainty or not)
+semmRT <- aggregate(mRT ~ session + nback, NbackL_blocks, semg) 
+semFAR <- aggregate(FAR ~ session + nback, NbackL_blocks, sem) 
+
+perfNback <- bind_cols(perfNback, semperf$perf, semmRT$mRT, semFAR$FAR) %>% 
+  rename(semperf = ...6, semmRT = ...7, semFAR = ...8)
+
+paged_table(perfNback)
+
+
+#N-Back Performance Graphs
+
+
+perf_perf = perfNback %>% ggplot (aes(x = session,
+                                              y = perf,
+                                              group = nback,
+                                              colour = nback)) +
+  geom_point(size = 2) +
+  geom_line(aes(group = nback), size = 1) +
+  theme_classic() +
+  labs(x = "session", y = "%Correct (HR + CRR)") +
+  theme( legend.text = element_text(size = 15),
+          axis.text = element_text(size = 12),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  geom_errorbar(aes(ymin =perf - semperf, ymax = perf + semperf),
+                colour = "black",
+                width = .05) +
+  scale_colour_manual( values = cbPalette2)+
+  scale_y_continuous(breaks = seq(from = 0.55, to = 1, by = 0.10),
+limits = c(0.50, 1)) 
+
+
+perf_FAR = perfNback %>% ggplot (aes(x = session,
+                                              y = FAR,
+                                              group = nback,
+                                              colour = nback)) +
+  geom_point(size = 2) +
+  geom_line(aes(group = nback), size = 1) +
+  theme_classic() +
+  labs(x = "session", y = "False Alarm Rate") +
+  theme( legend.text = element_text(size = 15),
+          axis.text = element_text(size = 12),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  geom_errorbar(aes(ymin =FAR - semFAR, ymax = FAR + semFAR),
+                colour = "black",
+                width = .05) +
+  scale_colour_manual(values = cbPalette2) 
+
+
+perf_mRT = perfNback %>% 
+  ggplot (aes(x = session, y = mRT,
+              group = nback,
+              colour = nback)) +
+  geom_point(size = 2) +
+  geom_line(aes(group = nback), size = 1) +
+  theme_classic() +
+  labs(x = "session", y = "Mean Reaction Time (ms)") +
+  theme( legend.text = element_text(size = 11),
+         legend.title = element_text(size = 11),
+          axis.text = element_text(size = 12),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13),
+   legend.position = c(.7, .9))  +
+  geom_errorbar(aes(ymin =mRT - semmRT, ymax = mRT + semmRT),
+                colour = "black",
+                width = .05) +
+  scale_y_continuous(breaks = seq(from = 500, to = 650, by = 20),
+limits = c(500, 650)) +
+  scale_colour_manual(name = "WM load", values = cbPalette2, labels = c("1-back", "3-back"))
+
+
+
+#Merge the 3 graphs and save the final graph
+perf_perf <- perf_perf + theme(legend.position = "none")
+perf_FAR <- perf_FAR + theme(legend.position = "none")
+perf_mRT = perf_mRT 
+
+title <- ggdraw() + draw_label(
+    "Fig.1: N-back performance VS Working Memory load for each session",
+    fontface = 'bold', size = 13,
+  ) +
+  theme(plot.margin = margin(0, 5, 10 ,0))
+
+plot_row = plot_grid(perf_perf, perf_FAR, perf_mRT, nrow=1, labels=c('A', 'B', 'C'))
+          
+# jpeg("PerfNbackL.jpg", width = 4000, height = 2500, units = "px",res=600)
+  plot_grid(
+  title, plot_row,
+  ncol = 1,
+  rel_heights = c(0.1, 1))
+# dev.off()
+```
+
+
+##Subjective vs Objective Duration 
+```{r}
+##Duration graphs without ILI
+
+DD <- NbackL_blocks %>%
+   group_by(session) %>%
+  group_by(nback, .add =T) %>% 
+  group_by(duration, .add = T) %>% 
+  summarize(DD = mean(duration_deviation), 
+            semDD = sem(duration_deviation))
+
+
+DD2 <- NbackL_blocks %>%
+   group_by(session) %>%
+  group_by(duration, .add = T) %>% 
+  summarize(DD = mean(duration_deviation), 
+            semDD = sem(duration_deviation))
+
+DD_vs_ODL1 <- DD2 %>%
+  ggplot (aes(x = session,
+                 y = DD,
+                group = duration,
+                colour = duration)) +
+  scale_y_continuous(breaks = seq(from = -35, to = 5, by = 5),
+                     limits = c(-35, 5)) +
+  geom_hline(aes(yintercept = 0), 
+             colour = 'black', 
+             size = .5, 
+             linetype = "dashed") +
+  geom_point(size = 2) +
+  geom_line(aes(group = duration), size = 1) +
+  theme_classic() +
+  labs(y = "Subjective Duration Deviation (s)", 
+       x = "Session",
+       title = "DD vs task Duration for different sessions") +
+  theme( legend.text = element_text(size = 11),
+         legend.title  = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  legend.position = c(.9, .5),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  geom_errorbar(aes(ymin = DD - semDD, ymax = DD + semDD),
+                colour = "black",
+                width = .05) +
+  scale_colour_manual(name = "Task Duration", values = cbPalette2, labels = c("45s", "90s")) 
+
+
+# jpeg("DDNbackLleg.jpg", width = 4000, height = 2500, units = "px",res=600)
+DD_vs_ODL1
+# dev.off()
+
+DD_vs_ODL2 <- DD %>%
+  ggplot (aes(x = session,
+                 y = DD,
+                group = duration,
+                colour = duration)) +
+  scale_y_continuous(breaks = seq(from = -35, to = 5, by = 5),
+                     limits = c(-35, 5)) +
+  geom_hline(aes(yintercept = 0), 
+             colour = 'black', 
+             size = .5, 
+             linetype = "dashed") +
+  geom_point(size = 2) +
+  geom_line(aes(group = duration), size = 1) +
+  theme_classic() +
+  labs(y = "Subjective Duration Deviation (s)", 
+       x = "Session",
+       title = "DD vs task Duration for different sessions and WM load") +
+  theme( legend.text = element_text(size = 11),
+         legend.title  = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  legend.position = c(.5, .5),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  geom_errorbar(aes(ymin = DD - semDD, ymax = DD + semDD),
+                colour = "black",
+                width = .05) +
+  scale_colour_manual(name = "Task Duration", values = cbPalette4, labels = c("45s", "90s")) +
+  facet_grid(.~nback)
+  
+
+# jpeg("DDNbackLleg.jpg", width = 4000, height = 2500, units = "px",res=600)
+# DD_vs_ODL2
+# dev.off()
+
+
+
+DD_vs_ODL3 <- DD %>%
+  ggplot (aes(x = nback,
+                 y = DD,
+                group = session,
+                colour = session)) +
+  scale_y_continuous(breaks = seq(from = -35, to = 5, by = 5),
+                     limits = c(-35, 5)) +
+  geom_hline(aes(yintercept = 0), 
+             colour = 'black', 
+             size = .5, 
+             linetype = "dashed") +
+  geom_point(size = 2) +
+  geom_line(aes(group = session), size = 1) +
+  theme_classic() +
+  labs(y = "Subjective Duration Deviation (s)", 
+       x = "WM load",
+       title = "DD vs task Duration for different sessions and WM load") +
+  theme( legend.text = element_text(size = 11),
+         legend.title  = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  legend.position = c(.50, .5),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  geom_errorbar(aes(ymin = DD - semDD, ymax = DD + semDD),
+                colour = "black",
+                width = .05) +
+  scale_colour_manual(name = "Session", values = cbPalette4, labels = c("S1", "S3")) +
+  facet_grid(.~duration)
+  
+
+
+
+# jpeg("DDNbackLleg.jpg", width = 4000, height = 2500, units = "px",res=600)
+DD_vs_ODL3
+# dev.off()
+```
+
+##Relative duration 
+
+```{r}
+# 
+# RD <- NbackL_blocks %>%
+#    group_by(session) %>%
+#   group_by(nback, .add =T) %>% 
+#   summarize(RD = mean(relative_duration), 
+#             semRD = sem(relative_duration),
+#             CRR)
+
+
+RD_45s_1back <- NbackL_blocks %>%
+  filter(duration == "45s" & nback == "1back") %>%
+  ggplot (aes(x = perf,
+                 y = relative_duration,
+                group = session,
+                colour = session)) +
+  geom_point(size = 1) +
+  theme_classic() +
+  labs(y = "Relative subjective duration", 
+       x = "Correct response rate",
+       title = "Relative duration as a function of %Correct in 1-back 45s trials") +
+  theme( legend.text = element_text(size = 11),
+         legend.title  = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  legend.position = c(.1, 0.9),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  scale_colour_manual(name = "Session", values = cbPalette4, labels = c("S1", "S3")) 
+
+RD_45s_1back
+
+
+RD_45s_3back <- NbackL_blocks %>%
+  filter(duration == "45s" & nback == "3back") %>%
+  ggplot (aes(x = perf,
+                 y = relative_duration,
+                group = session,
+                colour = session)) +
+  geom_point(size = 1) +
+  theme_classic() +
+  labs(y = "Relative subjective duration", 
+       x = "Correct response rate",
+       title = "Relative duration as a function of %Correct in 3-back 45s trials") +
+  theme( legend.text = element_text(size = 11),
+         legend.title  = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  legend.position = c(.1, 0.9),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  scale_colour_manual(name = "Session", values = cbPalette4, labels = c("S1", "S3")) 
+
+RD_45s_3back
+
+
+RD_90s_1back <- NbackL_blocks %>%
+  filter(duration == "90s" & nback == "1back") %>%
+  ggplot (aes(x = perf,
+                 y = relative_duration,
+                group = session,
+                colour = session)) +
+  geom_point(size = 1) +
+  theme_classic() +
+  labs(y = "Relative subjective duration", 
+       x = "Correct response rate",
+       title = "Relative duration as a function of %Correct in 1-back 90s trials") +
+  theme( legend.text = element_text(size = 11),
+         legend.title  = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  legend.position = c(.1, 0.9),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  scale_colour_manual(name = "Session", values = cbPalette4, labels = c("S1", "S3")) 
+
+RD_90s_1back
+
+
+RD_90s_3back <- NbackL_blocks %>%
+  filter(duration == "90s" & nback == "3back") %>%
+  ggplot (aes(x = perf,
+                 y = relative_duration,
+                group = session,
+                colour = session)) +
+  geom_point(size = 1) +
+  theme_classic() +
+  labs(y = "Relative subjective duration", 
+       x = "Correct response rate",
+       title = "Relative duration as a function of %Correct in 3-back 90s trials") +
+  theme( legend.text = element_text(size = 11),
+         legend.title  = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  legend.position = c(.1, 0.9),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  scale_colour_manual(name = "Session", values = cbPalette4, labels = c("S1", "S3")) 
+
+RD_90s_3back
+```
+
+
+
+
+# mixed-effect models (without R1S1) DURATION DEVIATION
+```{r}
+
+#Likelihood ratio test
+
+M1 <-lmer(duration_deviation ~ session + (1|ID), data=data, REML=FALSE)
+M2 <-lmer(duration_deviation ~ session + (duration|ID), data=data, REML=FALSE)
+lrtest(M1, M2) #M1 nested #M2 more complex   p <0.05  #the complex model is significantly more accurate
+
+M3 <-lmer(duration_deviation ~ session + (duration + session|ID), data=data, REML=FALSE)
+lrtest(M2, M3) #M2 nested #M3 more complex   p <0.05  #the complex model is significantly more accurate
+
+M4 <-lmer(duration_deviation ~ session + (duration + session + nback|ID), data=data, REML=FALSE)
+lrtest(M3, M4)  #M3 nested #4 more complex   p <0.05  #the complex model is significantly more accurate
+
+M5 <-lmer(duration_deviation ~ session + (duration + session + ILI + nback|ID), data=data, REML=FALSE)
+lrtest(M4, M5)  #M4 nested #5 more complex   p > 0.05  #the complex model is not significantly more accurate
+
+M6 <-lmer(duration_deviation ~ session + nback +  (duration + session + nback|ID), data=data, REML=FALSE)
+lrtest(M4, M6)  # n.s
+
+M7 <-lmer(duration_deviation ~ session + duration + (duration + session + nback|ID), data=data, REML=FALSE)
+lrtest(M4, M7) # p <0.05
+
+M8 <-lmer(duration_deviation ~ session + nback + duration + (duration + session + nback|ID), data=data, REML=FALSE)
+lrtest(M7, M8)   # n.s
+
+M9 <- lmer(duration_deviation ~ session * duration + (duration + session + nback|ID), data=data, REML=FALSE)
+lrtest(M7, M9)    # n.s
+
+M10 <- lmer(duration_deviation ~ session * nback * duration + (duration + session + nback|ID), data=data, REML=FALSE)
+lrtest(M7, M10)    # n.s
+ 
+summary(M1)
+summary(M2)
+summary(M3)
+summary(M4)
+summary(M5)
+summary(M6)
+summary(M7)
+summary(M8)
+summary(M9)
+summary(M10)
+
+AIC<-c(AIC(M1), AIC(M2), AIC(M3), AIC(M4), AIC(M5), AIC(M6), AIC(M7), AIC(M8), AIC(M9), AIC(M10))
+Model<-c("M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "M9", "M10")
+AICtable<-data.frame(Model=Model, AIC=AIC)
+AICtable
+
+#we use M7
+
+```
+
+
+
+
+#Main effects
+```{r}
+M7 <-lmer(duration_deviation ~ session + duration + (duration + session + nback|ID), data=data)
+summary(M7)
+
+stargazer(M7, type = "text",
+           title = "Regression results M2",
+          header = FALSE,
+          single.row = TRUE,
+          digits = 3,
+          star.cutoffs = c(0.05, 0.01, 0.001),
+          digit.separator = "")
+anova(M7)
+
+# -- Main effect of session --
+sess.emm <- emmeans(M7, ~ session) 
+sess.emm
+# plot(sess.emm, by = NULL, comparisons = TRUE, adjust = "mvt", 
+#      horizontal = FALSE, colors = "darkgreen")
+# pwpp(sess.emm)
+
+
+
+# -- Main effect of duration --
+duration.emm <- emmeans(M7, ~ duration) 
+duration.emm
+# plot(sess.emm, by = NULL, comparisons = TRUE, adjust = "mvt", 
+#      horizontal = FALSE, colors = "darkgreen")
+# pwpp(sess.emm)
+
+
+
+
+#Cross-effect ?
+M10 <- lmer(duration_deviation ~ session * nback * duration + (duration + session + nback|ID), data=data)
+summary(M10)
+
+
+# -- Main effect of Interaction session / duration / nback
+
+interaction.emm <- emmeans(M10, pairwise ~ duration | session + nback)
+interaction.emm
+interaction.emm <- emmeans(M10, pairwise ~ nback | duration + session)   #n.s
+interaction.emm
+interaction.emm <- emmeans(M10, pairwise ~ session | duration + nback)  #n.s
+interaction.emm
+
+
+```
+
+# Verification of model assumptions ####
+```{r}
+R1 <- resid(M7)
+F1 <- fitted(M7)
+
+## residuals distribution : histogramme and shapiro test for normality
+hist(R1, breaks = 30)
+
+shapiro.test(R1)
+
+## homogeneity : fitted values vs normalized residuals
+
+plot(x = F1, 
+     y = R1, 
+     xlab = "Fitted Values",
+     ylab = "Normalized residuals")
+abline(h = 0, lty = 2)
+
+# duration_deviation
+plot(x = data$duration_deviation, 
+     y = R1, 
+     xlab = "duration_deviation",
+     ylab = "Normalized residuals")
+abline(h = 0, lty = 2)
+
+# Participants
+boxplot(R1 ~ ID,   
+        ylab = "Normalized residuals",
+        data = data, xlab = "Participant")
+abline(h = 0, lty = 2)
+
+
+## independance : residuals vs each model covariable
+
+
+
+# duration
+boxplot(R1 ~ duration,   
+        ylab = "Normalized residuals",
+        data = data, xlab = "task duration")
+abline(h = 0, lty = 2)
+
+# nback
+boxplot(R1 ~ nback,   
+        ylab = "Normalized residuals",
+        data = data, xlab = "nback")
+abline(h = 0, lty = 2)
+ 
+
+#ILI
+boxplot(R1 ~ ILI,   
+        ylab = "Normalized residuals",
+        data = data, xlab = "ILI")
+abline(h = 0, lty = 2)
+
+
+
+```
+#PASSING OF TIME
+
+```{r}
+
+Likert_session <- NbackL_blocks %>%
+   filter(!is.na(likert)) %>%
+  mutate(likert = fct_relevel(likert, "Très lentement", "Lentement",  "Normalement", "Rapidement", "Très rapidement")) %>%
+	group_by(session, likert) %>%  # grouping by these two variables
+	tally() %>%  # counting the number of responses
+	mutate(perc = n / sum(n) * 100) %>%
+	select(-n) %>%
+	group_by(session) %>%
+	spread(likert, perc) 
+
+Likert_session
+```
+
+
+#Diverging stacked bar chart (session)
+```{r}
+
+likert_hi_lo <- Likert_session %>%
+	mutate(midlow = Normalement / 2,
+		midhigh = Normalement / 2) %>%
+	select(session, `Très lentement`, Lentement,midlow, midhigh, Rapidement, `Très rapidement`) %>%
+	gather(key = response, value = perc, 2:7) 
+	colnames <- (c("session", "response", "perc"))
+
+
+likert_lo <- likert_hi_lo %>%
+	filter(response %in% c( "midlow", "Lentement", "Très lentement")) %>%
+	mutate(response = factor(response, levels = c("Très lentement", "Lentement", "midlow")))
+
+likert_hi <- likert_hi_lo %>%
+	filter(response %in% c( "Très rapidement", "Rapidement", "midhigh")) %>%
+	mutate(response = factor(response, levels = c("Très rapidement", "Rapidement", "midhigh")))
+
+
+
+# Use RColorBrewer to store a preset diverging colour palette as a vector of colour codes 
+legend_pal <- brewer.pal(name = "RdBu", n = 5)
+
+# Duplicate the middle value, remember that "Sometimes" is actually two groups, "midhigh" and "midlow"
+legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
+
+# Replace the ugly white colour for "Sometimes" with a pleasant dishwater grey
+legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
+
+# Assign names to the vector based on the colours we want for each group
+# legend_pal =  c("#E69F00", "#56B4E9", "#009E73", "#F0E442",
+#                 "#D55E00", "#CC79A7")
+names(legend_pal) <- c("Très rapidement", "Rapidement","midhigh", "midlow", "Lentement", "Très lentement" )
+
+# jpeg("divergingBarlongitudinal3.jpg", width = 5000, height = 2500, units = "px",res=600)
+ggplot() + 
+	geom_bar(data = likert_hi, aes(x = session, y=perc, fill = response), stat="identity", width = 0.7) +
+	geom_bar(data = likert_lo, aes(x = session, y=-perc, fill = response), stat="identity", width = 0.7) + 
+	geom_hline(yintercept = 0, color =c("black")) + 
+	scale_fill_manual(values = legend_pal, name = "In the last round,\nthe time seemed \nto have passed:",
+		breaks = c("Très rapidement", "Rapidement", "midhigh", "Lentement", "Très lentement" ),
+		labels = c("Very quickly", "Quickly", "Normally", "Slowly", "Very slowly"  )) +
+	coord_flip() + 
+	labs(x = "session", y = "Percentage of respondents (%)", title = "Diverging stacked bar of likert scale responses for Passing of time vs session") +
+  scale_y_continuous(breaks = seq(from = -60, to = 60, by = 10),
+                     limits = c(-65,65)) +
+	theme_classic()
+# dev.off()
+
+```
+
+#Passing of Time: Session x WM load
+```{r}
+Likert_1backsession <- NbackL_blocks %>%
+  mutate(session = paste(session, nback)) %>%
+   filter(!is.na(likert)) %>%
+  filter(nback == "1back") %>%
+  mutate(likert = fct_relevel(likert, "Très lentement", "Lentement",  "Normalement", "Rapidement", "Très rapidement")) %>%
+	group_by(session, likert) %>%  # grouping by these two variables
+	tally() %>%  # counting the number of responses
+	mutate(perc = n / sum(n) * 100) %>%
+	select(-n) %>%
+	group_by(session) %>%
+	spread(likert, perc) 
+
+Likert_3backsession <- NbackL_blocks %>%
+  mutate(session = paste(session, nback)) %>%
+   filter(!is.na(likert)) %>%
+  filter(nback == "3back") %>%
+  mutate(likert = fct_relevel(likert, "Très lentement", "Lentement",  "Normalement", "Rapidement", "Très rapidement")) %>%
+	group_by(session, likert) %>%  # grouping by these two variables
+	tally() %>%  # counting the number of responses
+	mutate(perc = n / sum(n) * 100) %>%
+	select(-n) %>%
+	group_by(session) %>%
+	spread(likert, perc) 
+
+Likert_1backsession 
+Likert_3backsession
+Likert_session<- bind_rows(Likert_1backsession, Likert_3backsession)
+Likert_session
+
+```
+
+
+#Diverging stacked bar chart (session)
+```{r}
+
+likert_hi_lo <- Likert_session %>%
+	mutate(midlow = Normalement / 2,
+		midhigh = Normalement / 2) %>%
+	select(session, `Très lentement`, Lentement,midlow, midhigh, Rapidement, `Très rapidement`) %>%
+	gather(key = response, value = perc, 2:7) 
+	colnames <- (c("session", "response", "perc"))
+
+
+likert_lo <- likert_hi_lo %>%
+	filter(response %in% c( "midlow", "Lentement", "Très lentement")) %>%
+	mutate(response = factor(response, levels = c("Très lentement", "Lentement", "midlow")))
+
+likert_hi <- likert_hi_lo %>%
+	filter(response %in% c( "Très rapidement", "Rapidement", "midhigh")) %>%
+	mutate(response = factor(response, levels = c("Très rapidement", "Rapidement", "midhigh")))
+
+
+
+# Use RColorBrewer to store a preset diverging colour palette as a vector of colour codes 
+legend_pal <- brewer.pal(name = "RdBu", n = 5)
+
+# Duplicate the middle value, remember that "Sometimes" is actually two groups, "midhigh" and "midlow"
+legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
+
+# Replace the ugly white colour for "Sometimes" with a pleasant dishwater grey
+legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
+
+# Assign names to the vector based on the colours we want for each group
+# legend_pal =  c("#E69F00", "#56B4E9", "#009E73", "#F0E442",
+#                 "#D55E00", "#CC79A7")
+names(legend_pal) <- c("Très rapidement", "Rapidement","midhigh", "midlow", "Lentement", "Très lentement" )
+
+# jpeg("divergingBarlongitudinal6.jpg", width = 5000, height = 2500, units = "px",res=600)
+ggplot() + 
+	geom_bar(data = likert_hi, aes(x = session, y=perc, fill = response), stat="identity", width = 0.7) +
+	geom_bar(data = likert_lo, aes(x = session, y=-perc, fill = response), stat="identity", width = 0.7) + 
+	geom_hline(yintercept = 0, color =c("black")) + 
+	scale_fill_manual(values = legend_pal, name = "In the last round,\nthe time seemed \nto have passed:",
+		breaks = c("Très rapidement", "Rapidement", "midhigh", "Lentement", "Très lentement" ),
+		labels = c("Very quickly", "Quickly", "Normally", "Slowly", "Very slowly"  )) +
+	coord_flip() + 
+	labs(x = "session", y = "Percentage of respondents (%)", title = "Diverging stacked bar of likert scale responses for Passing of time vs session") +
+  scale_y_continuous(breaks = seq(from = -60, to = 60, by = 10),
+                     limits = c(-65,65)) +
+	theme_classic()
+# dev.off()
+
+```
+#Passing of time statistic models
+```{r}
+
+data = NbackL_blocks
+
+m1 = clmm(likert_n ~ session +(1|ID), data, Hess=T, nAGQ= 7)
+
+m2 = clmm(likert_n ~ session + duration +(1|ID), data, Hess=T, nAGQ= 7)
+lrtest(m1,m2)  # p < 0.05
+
+m3 = clmm(likert_n ~ session + nback + (1|ID), data, Hess=T, nAGQ= 7)
+lrtest(m2,m3)  # p < 0.05
+
+m4 = clmm(likert_n ~ session * nback + (1|ID), data, Hess=T, nAGQ= 7)
+lrtest(m3,m4)  # p < 0.05
+
+m5 = clmm(likert_n ~ session + nback + duration + (1|ID), data, Hess=T, nAGQ= 7)
+lrtest(m4,m5)  # p < 0.05
+
+m6 = clmm(likert_n ~ session * nback * duration + (1|ID), data, Hess=T, nAGQ= 7)
+lrtest(m5,m6)  # p < 0.05
+
+AIC<-c(AIC(m1), AIC(m2), AIC(m3), AIC(m4), AIC(m5), AIC(m6))
+model<-c("m1", "m2", "m3", "m4", "m5", "m6")
+AICtable<-data.frame(Model=model, AIC=AIC)
+AICtable
+
+
+summary(m1)
+summary(m2)
+summary(m3)
+summary(m4)
+summary(m5)
+summary(m6)
+
+
+
+#we choose m6
+```
+
+#Main effects
+```{r}
+m6 = clmm(likert_n ~ session * nback * duration + (1|ID), data, Hess=T, nAGQ= 7)
+summary(m6)
+
+# ----- Pairwise comparisons ----------------------
+
+# -- Main effect of duration --
+
+duration.emm <- emmeans(m6, ~ duration) 
+duration.emm
+plot(duration.emm, by = NULL, comparisons = TRUE, adjust = "mvt", 
+     horizontal = FALSE, colors = "darkgreen")
+pwpp(duration.emm)
+
+# -- Main effect of nback --
+
+nback.emm <- emmeans(m6, ~ nback) 
+nback.emm
+plot(nback.emm, by = NULL, comparisons = TRUE, adjust = "mvt", 
+     horizontal = FALSE, colors = "darkgreen")
+pwpp(nback.emm)
+
+
+# -- Main effect of session --
+
+session.emm <- emmeans(m6, ~ session) 
+session.emm
+plot(session.emm, by = NULL, comparisons = TRUE, adjust = "mvt", 
+     horizontal = FALSE, colors = "darkgreen")
+pwpp(session.emm)
+
+# -- Main effect of Interaction nback / session / duration
+
+interaction1.emm <- emmeans(m6, pairwise ~ nback | session + duration)
+interaction1.emm
+
+interaction2.emm <- emmeans(m6, pairwise ~ session |nback + duration)
+interaction2.emm
+
+interaction3.emm <- emmeans(m6, pairwise ~ duration |nback + session)
+interaction3.emm
+
+
+
+
+
+# chisq.test(NbackL_blocks$perf, NbackL_blocks$likert)
+# chisq.test(NbackL_blocks$mRT, NbackL_blocks$likert)   #no correlation between mRT and likert
+# chisq.test(NbackL_blocks$MR, NbackL_blocks$likert)
+# chisq.test(NbackL_blocks$FAR, NbackL_blocks$likert)
+# chisq.test(NbackL_blocks$CRR, NbackL_blocks$likert)
+
+
+
+```
+
+
+```{r}
+
+#Boxplot PoTJ vs Duration Deviation
+my_xlab <- paste(levels(Nback_blocks$likert),"\n(N=",table(Nback_blocks$likert),")",sep="")
+
+Boxplot_DD_Likert = Nback_blocks %>% 
+  filter( !is.na(likert)) %>%
+   ggplot(aes(y = duration_deviation, x = likert, fill = likert)) + 
+  geom_violin(varwidth = TRUE, width= 1, outlier.size = 0.1) +
+   scale_y_continuous(breaks = seq(from = -50, to = 30, by = 10),
+                     limits = c(-60,40))+
+  scale_x_discrete(labels=my_xlab) +
+  
+  scale_fill_viridis(discrete = TRUE, alpha=0.3, name = "In the last round,\nthe time seemed \nto have passed:",
+		breaks = c("Très rapidement", "Rapidement", "Normalement", "Lentement", "Très lentement" ),
+		labels = c("Very quickly", "Quickly", "Normally", "Slowly", "Very slowly"  )) +
+   theme_classic() +  
+  labs(y = "Subjective Duration Deviation (s)", x ="PoTJ", title = "Duration deviation vs Passage of Time Judgment (PoTJ)") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.3)) +
+  theme( legend.text = element_text(size = 10),
+          axis.text = element_text(size = 11), 
+ axis.title = element_text(size = 12)) 
+ 
+ # jpeg("Boxplot_DD_LikertS1.jpeg", width = 5000, height = 2500, units = "px",res=600)
+Boxplot_DD_Likert  
+# dev.off()
+
+```
+
+
+
+
+
+
+
+
+
+#pour chaque participant, estimation en fonction des conditions 
+
+```{r}
+NbackL_blocks %>%
+  filter(session == "S1" & Run == 1) %>%
+  mutate(cond = paste("R",as.character(Run),as.character(condition))) %>%
+  group_by(ID) %>%
+  ggplot (aes(x = cond,
+                 y = duration_deviation, colour = ID)) +
+  geom_point(size = 1) +
+    geom_line(aes(group = ID), size = 0.5) +
+  theme_classic() +
+  labs(y = "Relative subjective duration", 
+       x = "Correct response rate",
+       title = "Relative duration as a function of CRR in 3-back 90s trials") +
+  theme( legend.text = element_text(size = 11),
+         legend.title  = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  legend.position = c(.1, 0.9),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+ theme(legend.position = "none")
+
+
+
+
+NbackL_blocks %>%
+  filter(session == "S1" & Run == 1) %>%
+  mutate(trial = paste("R",as.character(Run),as.character(condition))) %>%
+  group_by(ID) %>%
+  ggplot (aes(x = trial,
+                 y = duration_deviation, colour = ID)) +
+  geom_point(size = 1) +
+    geom_line(aes(group = ID), size = 1) +
+  theme_classic() +
+  labs(y = "Relative subjective duration", 
+       x = "Correct response rate",
+       title = "Relative duration as a function of CRR in 3-back 90s trials") +
+  theme( legend.text = element_text(size = 11),
+         legend.title  = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  legend.position = c(.1, 0.9),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+ theme(legend.position = "none")
+
+```
+
+```{r}
+
+
+a <- NbackL_blocks %>%
+  group_by(ID, session, Run) %>%
+  arrange(block_nb) %>%
+  mutate(trial = 1:n())
+  
+a %>%
+  filter(session == "S1" & Run == 1) %>%
+  mutate(cond = paste("R",as.character(Run),as.character(condition))) %>%
+  group_by(ID) %>%
+  ggplot (aes(x = trial,
+                 y = duration_deviation, colour = ID)) +
+  geom_point(size = 1) +
+    geom_line(aes(group = ID), size = 0.5) +
+  theme_classic() +
+  labs(y = "Relative subjective duration", 
+       x = "Correct response rate",
+       title = "Relative duration as a function of CRR in 3-back 90s trials") +
+  theme( legend.text = element_text(size = 11),
+         legend.title  = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  legend.position = c(.1, 0.9),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+ theme(legend.position = "none")
+
+```
+
+
+
+#Boxplot Likert vs Subjective Duration for different Run
+```{r}
+
+
+#Boxplot PoTJ vs Duration Deviation
+my_xlab <- paste(levels(NbackL_blocks$likert),"\n(N=",table(NbackL_blocks$likert),")",sep="")
+
+Boxplot_DD_Likert = NbackL_blocks %>% 
+  filter( !is.na(likert)) %>%
+   ggplot(aes(y = duration_deviation, x = likert, fill = likert)) + 
+  geom_boxplot(varwidth = TRUE, width= 1, outlier.size = 0.1) +
+   scale_y_continuous(breaks = seq(from = -50, to = 30, by = 10),
+                     limits = c(-60,40))+
+  scale_x_discrete(labels=my_xlab) +
+  
+  scale_fill_viridis(discrete = TRUE, alpha=0.3, name = "In the last round,\nthe time seemed \nto have passed:",
+		breaks = c("Très rapidement", "Rapidement", "Normalement", "Lentement", "Très lentement" ),
+		labels = c("Very quickly", "Quickly", "Normally", "Slowly", "Very slowly"  )) +
+   theme_classic() +  
+  labs(y = "Subjective Duration Deviation (s)", x ="PoTJ", title = "Duration deviation vs Passage of Time Judgment (PoTJ)") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.3)) +
+  theme( legend.text = element_text(size = 10),
+          axis.text = element_text(size = 11), 
+ axis.title = element_text(size = 12)) 
+ 
+ # jpeg("Boxplot_DD_LikertS1.jpeg", width = 5000, height = 2500, units = "px",res=600)
+Boxplot_DD_Likert  
+# dev.off()
+
+```
+
+
+#Demographics
+```{r}
+
+datadir <- "data_exp_15096-16303_FR"
+datafiles <- list.files(datadir,'S1_Demographics.csv',full.names = T)
+
+demo <- read.csv2(datafiles, sep = ",") %>%
+  mutate(ID = PID)
+
+IDnback <- NbackL_blocks %>%
+  group_by(ID) %>%
+  summarise()
+IDnback
+
+#take only data from participants who took part in N-back task
+DemoNbackL <- demo %>%
+  filter(ID %in% IDnback$ID) %>%
+  select(`ID`, `Question.Key`, `Response`) %>%
+  pivot_wider(values_from = Response, names_from = `Question.Key`) %>%
+  mutate(Age = as.numeric(as.character(`Age-year`)) + as.numeric(as.character(`Age-month`))/12,
+         sex = as.character(sex)) 
+ 
+
+#sex ratio
+DemoNbackL %>%
+  group_by(sex) %>%
+  summarise(n = n(), n()/39)
+
+#Age (year + month)
+DemoNbackL %>%
+  summarise(mean = mean(Age), sd = sd(Age))
+
+# jpeg("DistribDD1backS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+DemoNbackL %>% 
+   filter(Age > 18) %>%
+  ggplot(aes(Age)) + 
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=2,
+                   colour = "black" , fill="white") + 
+      geom_density(aes(y = ..density..*(50 * 2)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "Age", title ="Age distribution of participants of the longitudinal study") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 20, to = 80, by = 5),
+  limits = c(18, 84))
+# dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
