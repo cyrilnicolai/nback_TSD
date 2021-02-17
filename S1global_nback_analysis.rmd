@@ -1,0 +1,776 @@
+---
+title: "S1 Global N-back analysis"
+output: html_document
+---
+
+#packages
+```{r, include= F}
+library(tidyverse)
+library(rmarkdown)
+library(ggpubr)
+library(viridis)
+library(cowplot)
+library(RColorBrewer)
+library(R.utils)
+
+library(lme4)
+library(lmtest)
+library(emmeans)
+library(stargazer)
+
+library(factoextra)
+library(moments)
+library(ordinal)
+```
+
+#functions
+```{r, include= F}
+## Standard Error of the Mean (SEM)
+ #Don't forget 10 ms bruit gorilla
+sem <- function(x, na.rm=FALSE) {
+     if(na.rm==TRUE) x <- na.omit(x)
+     sd(x)/sqrt(length(x)) 
+}
+
+##coefficent of variation
+cv <- function(x){sd(x)/mean(x)}
+
+#Z-score
+z_score <- function(x){(x - mean(x)) / sd(x)}
+
+## Outliers removal
+remove_outliers <- function(x, na.rm = TRUE, ...) {
+qnt <- quantile(x, probs = c(.25, .75), na.rm = na.rm, ...)
+H <- 1.5 * IQR(x, na.rm = na.rm)
+Y <- x
+Y[x < (qnt[1] - H)] <- NA
+Y[x > (qnt[2] + H)] <- NA
+Y}
+
+```
+
+#palettes
+```{r, include= F}
+#Palettes of colours
+cbPalette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442",
+               "#0072B2", "#D55E00", "#CC79A7")
+
+cbPalette2 <- c("#0072B2", "#CC79A7")
+
+cbPalette2_v2 <- c("#66c2a4", "#fc8d59")
+
+cbPalette4 <- c( "#56B4E9", "#009E73", "#E69F00", "#D55E00", "#CC79A7")
+
+cbPalette5 <- c( "#CC79A7", "#009E73")
+```
+
+#Formatting duration estimations 
+```{r}
+
+#Extract processed data for session 1
+file <- "/home/user/Desktop/Documents/TimeSocialDistancing/nback_TSD/S1global_nback.csv"
+
+Nback = read.csv2(file, sep = ",")
+
+
+# Each row is a participant response
+#Defining if the letter is a target letter and if an answer is a hit, a correct reject, a miss or a false alarm. 
+Nback_all <- Nback %>%           #134086 observations
+   filter(!is.na(translated)) %>%
+         mutate(PID = as.factor(PID),
+         timing_error = as.numeric(as.character(translated)) - parse_number(as.character(duration)))
+        
+
+
+# Each row is a different trial
+Nback_blocks <- Nback_all %>%    #3785 trials
+  group_by(PID) %>%
+  group_by(Run, .add = T) %>%
+  group_by(nback, .add =T) %>%
+  group_by(ILI, duration, block_nb, .add = T) %>%
+  summarise(condition = first(condition),
+            retro.pro = first(retro.pro),
+            likert = first(likert),
+            translated = first(translated),
+            timing_error = first(timing_error),
+            ntarget = first(ntarget),
+            notarget = first(notarget),
+            mRT = mean(as.numeric(as.character(Reaction.Time))),
+            hit = sum(response_arrow == "Left" & Correct == T),
+            miss  = sum(response_arrow == "Down" & Correct == F),
+            fa = sum(response_arrow == "Left" & Correct == F),
+            cr = sum(response_arrow == "Down" & Correct == T),
+            HR = sum(response_arrow == "Left" & Correct == T)/ntarget,
+            FA = sum(response_arrow == "Left" & Correct == F)/notarget,
+            CR = sum(response_arrow == "Down" & Correct == T)/notarget,
+            MR = sum(response_arrow == "Down" & Correct == F)/ntarget) %>%
+  ungroup() 
+
+
+ 
+# %Correct (perf) = Hit Rate + Correct rejection Rate / number of letters displayed during the trial
+Nback_blocks <- Nback_blocks %>%
+  mutate(likert = fct_relevel(likert, "Très lentement", "Lentement",  "Normalement", "Rapidement", "Très rapidement"),
+  likert_n = as.factor(recode(likert, "Très lentement" = -2, "Lentement" = -1, "Normalement" = 0, "Rapidement" = 1, "Très rapidement" = 2))) 
+
+
+Nback_blocks <- Nback_blocks %>%
+  filter(HR < 1.2 & MR < 1.5) %>%
+  mutate(HR = ifelse(HR > 1, 1, HR),
+         FA = ifelse(FA > 1, 1, FA),
+         CR = ifelse(CR > 1, 1, CR),
+         HR = ifelse(HR == 0, 0.01, HR),
+  HR = ifelse(HR == 1, 0.99, HR),
+  FA = ifelse(FA == 0, 0.01, FA),
+  FA = ifelse(FA == 1, 0.99, FA),
+  dprime2 = qnorm(HR) - qnorm(FA))
+
+
+paged_table(Nback_blocks) #15141
+
+
+
+#STD indices
+
+Nback_blocks <- Nback_blocks %>%
+  mutate(dprime = psycho::dprime(
+  n_hit = hit,
+  n_fa = fa,
+  n_miss = miss,
+  n_cr = cr,
+  n_targets = ntarget,
+  n_distractors = notarget)$dprime)
+  
+
+
+```
+
+
+
+#Remove prospective tasks (first trial of the first run for each participant)
+```{r}
+#What is the first design condition encountered by the subject ?
+Nback_blocks %>%
+  filter(retro.pro == "retrospective") %>%
+  count(condition)
+
+Nback_blocks %>%
+  filter(retro.pro == "retrospective")
+#1089 retrospective trials (1089 participants)
+
+
+#keep only prospective trials
+Nback_blocks <- Nback_blocks %>%
+  filter(retro.pro == "retrospective")
+
+#15141 --> 1089 trials
+
+#222 3-back tasks and 867 1-back task
+```
+
+
+
+
+```{r}
+
+#HR DISTRIBUTION
+
+
+jpeg("DistributionHRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(HR)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") + 
+      # geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "HR", title ="Hit Rate (HR) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+                 limits = c(-0.01,1.01))
+ dev.off()
+
+#FA DISTRIBUTION
+
+jpeg("DistributionFAS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(FA)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") + 
+      # geom_density(aes(y = ..density..*(500 * 0.02)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "FA", title ="False alarm rate (FA) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+                 limits = c(-0.01,1.01))
+ dev.off()
+
+#CR DISTRIBUTION
+
+
+# jpeg("DistributionCRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(CR)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") +
+      # geom_density(aes(y = ..density..*(00 * 0.02)), alpha=.2, fill="lightgreen") +
+  labs(y = "count", x = "CR", title ="Correct Rejection Rate (CR) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+                 limits = c(-0.01,1.01))
+ # dev.off()
+
+
+
+jpeg("DistributionD'S1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(dprime2)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") + 
+      # geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.2, fill="lightgreen") +
+  labs(y = "count", x = "d'", title ="D prime distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
+  # scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+  #                limits = c(-0.01,1.01))
+ dev.off()
+
+```
+#Outliers on d'
+```{r}
+perf_outliers <- Nback_blocks %>%
+filter(dprime2 <= 0)
+#192 outliers (121 1-back)
+
+Nback_blocks <- Nback_blocks %>%
+filter(dprime2 > 0)
+```
+
+
+
+
+```{r}
+
+#HR DISTRIBUTION
+
+
+# jpeg("DistributionHRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(HR)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") + 
+      # geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "HR", title ="Hit Rate (HR) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+                 limits = c(-0.01,1.01))
+ # dev.off()
+
+#FA DISTRIBUTION
+
+# jpeg("DistributionFAS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(FA)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") + 
+      # geom_density(aes(y = ..density..*(500 * 0.02)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "FA", title ="False alarm rate (FA) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+                 limits = c(-0.01,1.01))
+ # dev.off()
+
+#CR DISTRIBUTION
+
+
+# jpeg("DistributionCRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(CR)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") +
+      # geom_density(aes(y = ..density..*(00 * 0.02)), alpha=.2, fill="lightgreen") +
+  labs(y = "count", x = "CR", title ="Correct Rejection Rate (CR) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+                 limits = c(-0.01,1.01))
+ # dev.off()
+
+
+
+# jpeg("DistributionD'S1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(dprime)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") + 
+      # geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.2, fill="lightgreen") +
+  labs(y = "count", x = "d'", title ="D prime distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
+  # scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+  #                limits = c(-0.01,1.01))
+ # dev.off()
+
+```
+
+
+
+
+
+
+## N-BACK PERFORMANCE (Correct Response Rate, False Alarm Rate, mRT)
+
+
+#N-back Performance table and N-Back Performance Graphs for different WM load and Task duration
+```{r}
+perfNback <- Nback_blocks %>%
+  filter(!is.na(mRT)) %>%
+  group_by(nback, duration) %>%
+  summarise(HR = mean(HR),
+            mRT = mean(mRT),
+            FA = mean(FA))
+
+semHR <- aggregate(HR ~ nback + duration, Nback_blocks, sem) 
+semmRT <- aggregate(mRT ~ nback + duration, Nback_blocks, sem) #apply sem function 
+semFA <- aggregate(FA ~ nback + duration, Nback_blocks, sem) 
+
+perfNback <- bind_cols(perfNback, semHR$HR, semmRT$mRT, semFA$FA) %>% 
+  rename(semHR = ...6, semmRT = ...7, semFA = ...8 )
+
+paged_table(perfNback)
+
+# Correct response rate VS WM load and task duration
+perf_HR = perfNback %>% ggplot (aes(x = nback,
+                                              y = HR,
+                                              group = duration,
+                                              colour = duration)) +
+  geom_point(size = 2) +
+  geom_line(aes(group = duration), size = 1) +
+  theme_classic() +
+  labs(x = "WM load", y = "Hit Rate") +
+  theme( legend.text = element_text(size = 15),
+          axis.text = element_text(size = 12),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  geom_errorbar(aes(ymin = HR - semHR, ymax = HR + semHR),
+                colour = "black",
+                width = .05) +
+  scale_colour_manual(values = cbPalette2) +
+  scale_y_continuous(breaks = seq(from = 0.30, to = 0.80, by = 0.10),
+limits = c(0.29, 0.80))
+
+# False Alarm rate VS WM load and task duration
+perf_FA = perfNback %>% ggplot (aes(x = nback,
+                                              y = FA,
+                                              group = duration,
+                                              colour = duration)) +
+  geom_point(size = 2) +
+  geom_line(aes(group = duration), size = 1) +
+  theme_classic() +
+  labs(x = "WM load", y = "False Alarm Rate") +
+  theme( legend.text = element_text(size = 15),
+          axis.text = element_text(size = 12),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  geom_errorbar(aes(ymin =FA - semFA, ymax = FA + semFA),
+                colour = "black",
+                width = .05) +
+  scale_colour_manual(values = cbPalette2) +
+  scale_y_continuous(breaks = seq(from = 0, to = 0.20, by = 0.05),
+limits = c(0, 0.22)) 
+
+# mean Reaction Time VS WM load and task duration
+perf_mRT = perfNback %>% 
+  ggplot (aes(x = nback, y = mRT,
+              group = duration,
+              colour = duration)) +
+  geom_point(size = 2) +
+  geom_line(aes(group = duration), size = 1) +
+  theme_classic() +
+  labs(x = "WM load", y = "Mean Reaction Time (ms)") +
+  theme( legend.text = element_text(size = 11),
+         legend.title = element_text(size = 11),
+          axis.text = element_text(size = 12),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13),
+   legend.position = c(.8, .2))  +
+  geom_errorbar(aes(ymin =mRT - semmRT, ymax = mRT + semmRT),
+                colour = "black",
+                width = .05)  +
+  scale_y_continuous(breaks = seq(from = 560, to = 620, by = 20),
+limits = c(560, 620)) +
+  scale_colour_manual(values = cbPalette2, labels = c("45s", "90s"))
+
+
+#merge the 3 graphs and save the final graph
+perf_HR <- perf_HR + theme(legend.position = "none")
+perf_FA <- perf_FA + theme(legend.position = "none")
+perf_mRT = perf_mRT 
+
+title <- ggdraw() + draw_label(
+    "Fig.1: N-back performance VS working memory load and task duration",
+    fontface = 'bold', size = 13) +
+  theme(plot.margin = margin(0, 5, 10 ,0))
+
+plot_row = plot_grid(perf_HR, perf_FA, perf_mRT, nrow=1, labels=c('A', 'B', 'C'))
+    
+# jpeg("PerfNbackDurationproS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+  plot_grid(
+  title, plot_row,
+  ncol = 1,
+  rel_heights = c(0.1, 1))  # rel_heights values control vertical title margins
+# dev.off()
+```
+
+
+
+
+#N-back Performance table and N-Back Performance Graphs for different WM load and ILI (Inter-letter interval)
+```{r}
+
+perfNback <- Nback_blocks %>%
+  filter(!is.na(mRT)) %>%
+  group_by(nback, ILI) %>%
+  summarise(HR = mean(HR),
+            mRT = mean(mRT),
+            FA = mean(FA))
+
+semHR <- aggregate(HR ~ nback + ILI, Nback_blocks, sem) 
+semmRT <- aggregate(mRT ~ nback + ILI, Nback_blocks, sem)  #apply sem function 
+semFA <- aggregate(FA ~ nback + ILI, Nback_blocks, sem) 
+
+perfNback <- bind_cols(perfNback, semHR$HR, semmRT$mRT, semFA$FA) %>% 
+  rename(semHR = ...6, semmRT = ...7, semFA = ...8 )
+
+paged_table(perfNback)
+
+
+perf_HR = perfNback %>% ggplot (aes(x = nback,
+                                              y = HR,
+                                              group = ILI,
+                                              colour = ILI)) +
+  geom_point(size = 2) +
+  geom_line(aes(group = ILI), size = 1) +
+  theme_classic() +
+  labs(x = "WM load", y = "Hit Rate") +
+  theme( legend.text = element_text(size = 15),
+          axis.text = element_text(size = 12),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  geom_errorbar(aes(ymin = HR - semHR, ymax = HR + semHR),
+                colour = "black",
+                width = .05) +
+  scale_colour_manual(values = cbPalette2_v2) +
+  scale_y_continuous(breaks = seq(from = 0.40, to = 0.80, by = 0.10),
+limits = c(0.35, 0.80))
+
+
+perf_FA = perfNback %>% ggplot (aes(x = nback,
+                                              y = FA,
+                                              group = ILI,
+                                              colour = ILI)) +
+  geom_point(size = 2) +
+  geom_line(aes(group = ILI), size = 1) +
+  theme_classic() +
+  labs(x = "WM load", y = "False Alarm Rate") +
+  theme( legend.text = element_text(size = 15),
+          axis.text = element_text(size = 12),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  geom_errorbar(aes(ymin =FA - semFA, ymax = FA + semFA),
+                colour = "black",
+                width = .05) +
+  scale_colour_manual(values = cbPalette2_v2)  +
+  scale_y_continuous(breaks = seq(from = 0.05, to = 0.20, by = 0.05),
+limits = c(0.05, 0.20)) 
+
+
+# mean Reaction Time VS WM load and ILI
+perf_mRT = perfNback %>% 
+  ggplot (aes(x = nback, y = mRT,
+              group = ILI,
+              colour = ILI)) +
+  geom_point(size = 2) +
+  geom_line(aes(group = ILI), size = 1) +
+  theme_classic() +
+  labs(x = "WM load", y = "Mean Reaction Time (ms)") +
+  theme( legend.text = element_text(size = 11),
+         legend.title = element_text(size = 11),
+          axis.text = element_text(size = 12),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13),
+   legend.position = c(.8, .4))  +
+  geom_errorbar(aes(ymin =mRT - semmRT, ymax = mRT + semmRT),
+                colour = "black",
+                width = .05) +
+  scale_y_continuous(breaks = seq(from = 560, to = 660, by = 20),
+limits = c(550, 660)) +
+  scale_colour_manual(values = cbPalette2_v2, labels = c("1500ms", "1800ms"))
+
+
+#merge the 3 graphs and save the final graph
+perf_HR <- perf_HR + theme(legend.position = "none")
+perf_FA <- perf_FA + theme(legend.position = "none")
+perf_mRT = perf_mRT 
+
+title <- ggdraw() + draw_label(
+    "Fig.1: N-back performance VS working memory load and ILI",
+    fontface = 'bold', size = 13) +
+  theme(plot.margin = margin(0, 5, 10 ,0))
+
+plot_row = plot_grid(perf_HR, perf_FA, perf_mRT, nrow=1, labels=c('A', 'B', 'C'))
+          
+# jpeg("PerfNbackILIproS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+  plot_grid(
+  title, plot_row,
+  ncol = 1,
+  rel_heights = c(0.1, 1)) # rel_heights values control vertical title margins
+# dev.off()
+```
+
+#Timing Error
+```{r}
+
+# jpeg("DistribTES1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(timing_error)) + 
+  facet_grid(.~duration) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=1,
+                   colour = "black" , fill="white") + 
+      # geom_density(aes(y = ..density..*(8000 * 1)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "Timing Error", title ="Timing Error distribution for 45s/90s tasks (before outliers removal)") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = -90, to = 220, by = 30),
+  limits = c(-90, 230))
+# dev.off()
+```
+
+
+
+
+#Outliers removal on Timing Error
+```{r}
+#Outliers on d'
+
+Nback_blocks <- Nback_blocks %>%
+  group_by(duration) %>%
+  mutate(ZTiming = scale(timing_error))
+
+estimation_outliers <- Nback_blocks %>%
+filter(abs(ZTiming) > 2)    #37 outliers  (27 for 45s)
+  
+Nback_blocks %>%
+  ggplot() + geom_histogram(mapping = aes(ZTiming))
+
+Nback_blocks <-  Nback_blocks %>%        #897 -> 860 trials
+  filter(abs(ZTiming) <= 2 )
+```
+
+#Timing Error
+```{r}
+
+# jpeg("DistribTE2S1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(timing_error)) + 
+  facet_grid(.~duration) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=1,
+                   colour = "black" , fill="white") + 
+      # geom_density(aes(y = ..density..*(5000 * 1)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "Timing Error", title ="Timing Error distribution for 45s/90s tasks (after outliers removal)") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = -90, to = 90, by = 15),
+  limits = c(-100, 100))
+# dev.off()
+```
+
+
+
+
+
+
+
+# mean Reaction Time distribution for 1-back and 3-back 
+```{r}
+ mRT_1back <-  Nback_blocks %>%
+  filter(nback == "1back") 
+ mRT_3back <- Nback_blocks %>%
+  filter(nback == "3back") 
+ 
+
+# QQ plot
+ title <- ggdraw() + 
+   draw_label("Normal QQ plot of mean Reaction Time for 1-back and 3-back",
+    fontface = 'bold', size = 13) +
+  theme(plot.margin = margin(0, 0, 15 ,0))
+
+plot_row = plot_grid(ggqqplot(mRT_1back$mRT, size = 0.2),
+                     ggqqplot(mRT_3back$mRT, size = 0.2), 
+                     nrow=1, labels=c('1-back', '3-back'),
+  label_size = 11,
+  hjust = -0.5, vjust = -0.5)
+          
+# jpeg("QQplotmRTS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+  plot_grid(
+  title, plot_row,
+  ncol = 1,
+  rel_heights = c(0.1, 1))
+# dev.off()
+
+#shapiro-wilk test  H0 = normal
+shapiro.test(mRT_1back$mRT)
+shapiro.test(mRT_3back$mRT)
+
+
+#the two distribution are skewed ! 
+
+
+# jpeg("DistributionmRTS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(mRT)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth= 30,
+                   colour = "black" , fill="white") + 
+      geom_density(aes(y = ..density..*(1800 * 30)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "Hit Rate", title ="Mean Reaction Time Distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1300, by = 250),
+                 limits = c(0,1300))
+ # dev.off()
+
+
+
+skewness(filter(
+  Nback_blocks, nback == "1back")$mRT, na.rm = TRUE)   #positive asymetrie
+
+skewness(filter(
+  Nback_blocks, nback == "3back")$mRT, na.rm = TRUE)   #positive asymetrie
+
+
+Nback_blocks$normRT <- log10(Nback_blocks$mRT)
+mRT_1back$normRT <- log10(mRT_1back$mRT)
+mRT_3back$normRT <- log10(mRT_3back$mRT)
+
+
+skewness(filter(
+  Nback_blocks, nback == "1back")$normRT, na.rm = TRUE)   #positive asymetrie
+
+skewness(filter(
+  Nback_blocks, nback == "3back")$normRT, na.rm = TRUE)   #negative asymetrie
+#sqrt(x) pour les données asymétriques positives ?
+
+# jpeg("DistributionmRTS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(normRT)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth= 0.01,
+                   colour = "black" , fill="white") + 
+      geom_density(aes(y = ..density..), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "Hit Rate", title ="Mean Reaction Time Distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
+  # scale_x_continuous(breaks = seq(from = 0, to = 1300, by = 250),
+  #                limits = c(0,1300))
+ # dev.off()
+
+shapiro.test(mRT_1back$normRT)
+shapiro.test(mRT_3back$normRT)
+```
+
+
+
+
+
+
+
+
+
+##Subjective vs Objective Duration (with and without ILI)
+```{r}
+#Duration estimation tables 
+
+durations <- Nback_blocks %>%
+  group_by(nback) %>% 
+  group_by(duration, .add = T) %>% 
+  summarize(DD = mean(timing_error), semDD = sem(timing_error))
+
+durations_by_ILI <- Nback_blocks%>%
+  group_by(duration, .add = T) %>%   
+  group_by(ILI, .add = T) %>%
+  group_by(nback, .add = T) %>%
+  summarize(DD = mean(timing_error), semDD = sem(timing_error))
+
+
+
+#Subjective vs Objective Duration graph
+DD_vs_OD_Nback = durations %>% ggplot (aes(x = duration,
+                                              y = DD,
+                                              group = nback,
+                                              colour = nback)) +
+scale_y_continuous(breaks = seq(from = -20, to = 0, by = 5),
+                     limits = c(-23, 5)) +
+  geom_hline(aes(yintercept = 0), 
+             colour = 'black', 
+             size = .5, 
+             linetype = "dashed") +
+  geom_point(size = 2) +
+  geom_line(aes(group = nback), size = 1) +
+  theme_classic() +
+  labs(y = "Subjective Duration Deviation (s)", x = "Objective Task Duration (s)") +
+  theme(legend.text = element_text(size = 11),
+         legend.title  = element_text(size = 12),
+        axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  legend.position = c(.90, .65),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  geom_errorbar(aes(ymin = DD - semDD, ymax = DD + semDD),
+                colour = "black",
+                width = .05) +
+  scale_colour_manual(values = cbPalette, labels = c("1-back", "3-back"), name = "WM load")
+
+#Subjective vs Objective Duration with ILI
+DD_vs_OD_ILI = durations_by_ILI %>%
+  ggplot (aes(x = duration,
+                 y = DD,
+                group = ILI,
+                colour = ILI)) +
+  scale_y_continuous(breaks = seq(from = -20, to = 0, by = 5),
+                     limits = c(-23, 5)) +
+  geom_hline(aes(yintercept = 0), 
+             colour = 'black', 
+             size = .5, 
+             linetype = "dashed") +
+  geom_point(size = 2) +
+  geom_line(aes(group = ILI), size = 1) +
+  theme_classic() +
+  labs(y = "Subjective Duration Deviation (s)", x = "Objective Task Duration (s)") +
+  theme( legend.text = element_text(size = 11),
+         legend.title  = element_text(size = 12),
+         axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  legend.position = c(.90, .7),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  geom_errorbar(aes(ymin = DD - semDD, ymax = DD + semDD),
+                colour = "black",
+                width = .05) +
+ scale_colour_manual(values = cbPalette2_v2, labels = c("1500ms", "1800ms")) +
+  facet_grid(.~nback)
+
+
+#Merge the two graphs
+title <- ggdraw() + draw_label(
+    "Subjective Duration Deviation VS Objective Duration for different conditions",
+    fontface = 'bold', size = 13) +
+  theme(plot.margin = margin(0, 5, 10 ,0))
+
+plot_row = plot_grid(DD_vs_OD_Nback + theme(plot.margin = margin(0, 30, 0, 0)),
+  DD_vs_OD_ILI + theme(plot.margin = margin(0, 10, 0, 0)),  
+  nrow=1, labels=c('A', 'B'),  rel_widths =  c(3, 5))
+          
+# jpeg("SD_ODproS1.jpg", width = 5000, height = 2500, units = "px",res=600)
+  plot_grid(
+  title, plot_row,
+  ncol = 1,
+  rel_heights = c(0.1, 1))
+# dev.off()
+
+
+```
+
+

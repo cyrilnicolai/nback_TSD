@@ -1,7 +1,7 @@
 ---
 title: "n-back data analysis (S1)"
 params:
-  experimentID:
+  experimentPID:
   - 15096
   - 16303
   rootdir: /home/user/Desktop/Documents/TimeSocialDistancing
@@ -33,17 +33,12 @@ library(cowplot)
 library(RColorBrewer)
 library(R.utils)
 
-source('http://www.sthda.com/upload/rquery_t_test.r')
 library(lme4)
 library(lmtest)
 library(emmeans)
 library(stargazer)
-# library(ggeffects)
-# library(psycho)
 
 library(factoextra)
-# library(NbClust)
-# library(cluster)
 library(moments)
 library(ordinal)
 ```
@@ -51,11 +46,7 @@ library(ordinal)
 #functions
 ```{r, include= F}
 ## Standard Error of the Mean (SEM)
- #+10 ms bruit gorilla
-semg <- function(x, na.rm=FALSE) {
-     if(na.rm==TRUE) x <- na.omit(x)
-     sd(x)/sqrt(length(x)) + 0.01
-}
+ #Don't forget 10 ms bruit gorilla
 sem <- function(x, na.rm=FALSE) {
      if(na.rm==TRUE) x <- na.omit(x)
      sd(x)/sqrt(length(x)) 
@@ -93,50 +84,27 @@ cbPalette4 <- c( "#56B4E9", "#009E73", "#E69F00", "#D55E00", "#CC79A7")
 cbPalette5 <- c( "#CC79A7", "#009E73")
 ```
 
-
 #Formatting duration estimations 
 ```{r}
 
-#Extract data for session 1
-datadir <- "data_exp_15096-16303_FR_processed"
-datafiles <- list.files(datadir,'S.*_nback.csv',full.names = T)
+#Extract processed data for session 1
+file <- "/home/user/Desktop/Documents/TimeSocialDistancing/data_exp_15096-16303_FR_processed/S1_nback.csv"
 
-Nback = read.csv2(datafiles[1], sep = ",")
+Nback = read.csv2(file, sep = ",")
 
 
 # Each row is a participant response
 #Defining if the letter is a target letter and if an answer is a hit, a correct reject, a miss or a false alarm. 
-Nback_all <- Nback %>%           #133232 observations
+Nback_all <- Nback %>%           #134086 observations
    filter(!is.na(translated)) %>%
-         mutate(ID = as.factor(Participant.Private.ID),
-         correct.reject = ifelse(response_arrow == "Down" & Correct == TRUE, 1, 0),    
-         miss = ifelse(response_arrow == "Down" & Correct == FALSE, 1, 0),
-         hit = ifelse(response_arrow == "Left" & Correct == TRUE, 1, 0),
-         false.alarm = ifelse(response_arrow == "Left" & Correct == F, 1, 0),
-         target = ifelse(hit == 1 | miss == 1, "target", "non-target"))
-
-#From the subjective duration estimation (SD) and the objective task duration (OD), defining:
-#Duration deviation = SD - OD
-#Relative duration = SD/OD
-#Relative deviation = (SD - OD)/OD
-Nback_all <- Nback_all %>% 
-    mutate(duration_deviation = translated - parse_number(as.character(duration)), 
-           relative_deviation = (translated - parse_number(as.character(duration)))/ parse_number(as.character(duration)),
-         relative_duration = translated / parse_number(as.character(duration)))
-
-
-#paradigmatic threshold on RT: every correct response that took less than 200ms is discarded
-mRT <- Nback_all %>% 
-  mutate(Reaction.Time = as.numeric(as.character(Reaction.Time))) %>%
-  filter(Correct == T) %>%  
-  filter(Reaction.Time > 200) %>% # 2330 out of 111213 correct responses --> 2%
-  group_by(block_nb) %>%
-summarize(mRT = mean(as.numeric(as.character(Reaction.Time))))
+         mutate(PID = as.factor(PID),
+         timing_error = translated - parse_number(as.character(duration)))
+        
 
 
 # Each row is a different trial
 Nback_blocks <- Nback_all %>%    #3785 trials
-  group_by(ID) %>%
+  group_by(PID) %>%
   group_by(Run, .add = T) %>%
   group_by(nback, .add =T) %>%
   group_by(ILI, duration, block_nb, .add = T) %>%
@@ -144,87 +112,48 @@ Nback_blocks <- Nback_all %>%    #3785 trials
             retro.pro = first(retro.pro),
             likert = first(likert),
             translated = first(translated),
-            duration_deviation = first(duration_deviation),
-            relative_duration = first(relative_duration),
-            relative_deviation = first(relative_deviation),
-            HR = mean(hit),
-            FAR = mean(false.alarm),
-            CRR = mean(correct.reject),
-            MR = mean(miss),
-            perf = sum(hit) + sum(correct.reject)) %>%
+            timing_error = first(timing_error),
+            ntarget = first(ntarget),
+            notarget = first(notarget),
+            mRT = mean(as.numeric(as.character(Reaction.Time))),
+            hit = sum(response_arrow == "Left" & Correct == T),
+            miss  = sum(response_arrow == "Down" & Correct == F),
+            fa = sum(response_arrow == "Left" & Correct == F),
+            cr = sum(response_arrow == "Down" & Correct == T),
+            HR = sum(response_arrow == "Left" & Correct == T)/ntarget,
+            FA = sum(response_arrow == "Left" & Correct == F)/notarget,
+            CR = sum(response_arrow == "Down" & Correct == T)/notarget,
+            MR = sum(response_arrow == "Down" & Correct == F)/ntarget) %>%
   ungroup() 
 
+
+ 
 # %Correct (perf) = Hit Rate + Correct rejection Rate / number of letters displayed during the trial
 Nback_blocks <- Nback_blocks %>%
-  mutate(perf = ifelse(
-    duration == "45s" & ILI == "1500ms" , perf/30, perf),
- perf = ifelse(
-    duration == "45s" & ILI == "1800ms" , perf/25, perf),
- perf = ifelse(
-    duration == "90s" & ILI == "1500ms" , perf/60, perf),
-  perf = ifelse(
-    duration == "90s" & ILI == "1800ms" , perf/50, perf),
- likert = fct_relevel(likert, "Très lentement", "Lentement",  "Normalement", "Rapidement", "Très rapidement"),
-  likert_n = as.factor(recode(likert, "Très lentement" = -2, "Lentement" = -1, "Normalement" = 0, "Rapidement" = 1, "Très rapidement" = 2)))
+  mutate(likert = fct_relevel(likert, "Très lentement", "Lentement",  "Normalement", "Rapidement", "Très rapidement"),
+  likert_n = as.factor(recode(likert, "Très lentement" = -2, "Lentement" = -1, "Normalement" = 0, "Rapidement" = 1, "Très rapidement" = 2))) %>%
+  mutate(HR = ifelse(HR > 1, 1, HR),
+         FA = ifelse(FA > 1, 1, FA),
+         CR = ifelse(CR > 1, 1, CR))
 
 
-Nback_blocks <- left_join(Nback_blocks, mRT)
-paged_table(Nback_blocks) #3785 trials
+
+#STD indices
+
+Nback_blocks <- Nback_blocks %>%
+  mutate(dprime = psycho::dprime(
+  n_hit = hit,
+  n_fa = fa,
+  n_miss = miss,
+  n_cr = cr,
+  n_targets = ntarget,
+  n_distractors = notarget)$dprime)
+
+paged_table(Nback_blocks) #3812 trials
 
 ```
 
 
-
-# OUTLIERS: Removing |z_score| > 2 (2 standard deviation from the mean) on subjects' performance and duration estimation + paradigmatic threshold               #3785 --> 3264 trials (521 outliers ~ 14 %)
-```{r}
-#Outliers: duration estimation
-
-Nback_blocks <- Nback_blocks %>%
-  group_by(duration) %>%
-  mutate(z_score = scale(duration_deviation))
-
-estimation_outliers <- Nback_blocks %>%
-filter(abs(z_score) >= 2)    #208 outliers (5.5 %)
-  
-# Nback_blocks %>%
-#   ggplot() + geom_histogram(mapping = aes(z_score))
-
-Nback_blocks <-  Nback_blocks %>%        #3785 -> 3577 trials
-filter(abs(z_score) < 2 )
-
-# Nback_blocks %>%
-# ggplot() + geom_histogram(mapping = aes(z_score))
-
-
-
-#Outliers: Performance (perf = correct response rate)
-
-Nback_blocks <- Nback_blocks %>%
-  group_by(nback) %>%
-  mutate(z_score2 = scale(perf))
-
-perf_outliers <- Nback_blocks %>%  #217 outliers (~6 %)
-filter(abs(z_score2) >= 2) 
-
-# Nback_blocks %>%
-  # ggplot() + geom_histogram(mapping = aes(z_score2))
-
-Nback_blocks <-  Nback_blocks %>%      #3577 -> 3360
-filter(abs(z_score2) < 2) %>%
-  select(-z_score, -z_score2)
-
-
-
-# paradigmatic thresholds on duration estimation: 
-#the estimate has to be in the interval [1/6* Task duration ; 2* Task duration]
-
-paradigm_outliers <- Nback_blocks %>%   # 96 outliers (~3%)
-  filter(translated <= (1/6) * parse_number(as.character(duration)) | translated >= 2* parse_number(as.character(duration)))
-
-Nback_blocks <- Nback_blocks %>%       # 3360 -> 3264 trials
-  filter(translated > (1/6) * parse_number(as.character(duration)) & translated < 2* parse_number(as.character(duration)))
-
-```
 
 #Remove restrospective tasks (first trial of the first run for each participant)
 ```{r}
@@ -235,18 +164,261 @@ Nback_blocks %>%
 
 Nback_blocks %>%
   filter(retro.pro == "retrospective")
-#287 retrospective trials (287 participants)
+#357 retrospective trials (357 participants)
 
 
 #keep only prospective trials
 Nback_blocks <- Nback_blocks %>%
   filter(retro.pro == "prospective")
 
-#3213 --> 2977 trials
+#3812 --> 3461 trials          (with 1600 1-back tasks)
 ```
 
 
 
+
+```{r}
+
+#HR DISTRIBUTION
+
+
+# jpeg("DistributionHRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(HR)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") + 
+      # geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "HR", title ="Hit Rate (HR) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+                 limits = c(-0.01,1.01))
+ # dev.off()
+
+#FA DISTRIBUTION
+
+# jpeg("DistributionFAS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(FA)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") + 
+      # geom_density(aes(y = ..density..*(500 * 0.02)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "FA", title ="False alarm rate (FA) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+                 limits = c(-0.01,1.01))
+ # dev.off()
+
+#CR DISTRIBUTION
+
+
+# jpeg("DistributionCRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(CR)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") +
+      # geom_density(aes(y = ..density..*(00 * 0.02)), alpha=.2, fill="lightgreen") +
+  labs(y = "count", x = "CR", title ="Correct Rejection Rate (CR) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+                 limits = c(-0.01,1.01))
+ # dev.off()
+
+
+
+# jpeg("DistributionD'S1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(dprime)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") + 
+      # geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.2, fill="lightgreen") +
+  labs(y = "count", x = "d'", title ="D prime distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
+  # scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+  #                limits = c(-0.01,1.01))
+ # dev.off()
+
+```
+
+
+
+
+
+
+# CR OUTLIERS: Removing |z_score| > 2 (2 standard deviation from the mean) on subjects' performance
+```{r}
+
+Nback_blocks <- Nback_blocks %>%
+  group_by(nback) %>%
+  mutate(zCR = scale(CR))
+
+CR_outliers <- Nback_blocks %>%  #184 outliers (~6 %) (87 for 1-back tasks)
+filter(abs(zCR) >= 2)
+
+Nback_blocks %>%
+ggplot() + geom_histogram(mapping = aes(zCR)) + facet_grid(.~nback)
+
+Nback_blocks <-  Nback_blocks %>%      #3102 --> 2918
+filter(abs(zCR) < 2) %>%
+  select(-zCR)
+
+
+#CR DISTRIBUTION
+
+
+# jpeg("DistributionHRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(CR)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") + 
+      geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.2, fill="lightgreen") +
+  labs(y = "count", x = "CR", title ="CR distribution for 1-back and 3-back (after outliers removal)") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+                 limits = c(-0.01,1.20))
+ # dev.off()
+
+
+#HR DISTRIBUTION
+
+
+# jpeg("DistributionHRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(HR)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") + 
+      geom_density(aes(y = ..density..*(7000 * 0.02)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "HR", title ="Hit Rate (HR) distribution for 1-back and 3-back (after removing outliers") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+                 limits = c(-0.01,1.20))
+ # dev.off()
+```
+
+# Distribution of the subjective duration and the timing error for 45s and 90s tasks
+```{r}
+
+#Subjective duration 
+
+Nback_blocks %>%
+  ggplot(aes(translated)) + 
+  facet_grid(.~duration) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=1,
+                   colour = "black" , fill="white") + 
+      geom_density(aes(y = ..density..*(5000 * 1)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "Subjective Duration", title ="Distribution of the subjective duration for 45s and 90s tasks") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5))
+
+
+#Timing error
+
+# jpeg("DistribDDS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(timing_error)) + 
+  facet_grid(.~duration) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=1,
+                   colour = "black" , fill="white") + 
+      geom_density(aes(y = ..density..*(5000 * 1)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "timing error", title ="Distribution of the timing error for 45s and 90s tasks") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5))
+  # scale_x_continuous(breaks = seq(from = -90, to = 60, by = 15),
+  # limits = c(-100, 70))
+# dev.off()
+
+#Relative Duration
+```
+
+
+
+
+
+# Timing error OUTLIERS: Removing |z_score| > 2 (2 standard deviation from the mean) on subjects' performance
+```{r}
+#Outliers: Timing error
+
+Nback_blocks <- Nback_blocks %>%
+  group_by(nback) %>%
+  mutate(z_score = scale(timing_error))
+
+TE_outliers <- Nback_blocks %>%  #135 outliers (~4 %) (84 for 3-back tasks)
+filter(abs(z_score) >= 2)
+
+Nback_blocks %>%
+ggplot() + geom_histogram(mapping = aes(z_score)) + facet_grid(.~nback)
+
+Nback_blocks <-  Nback_blocks %>%      #3461 -> 3271
+filter(abs(z_score) < 2) %>%
+  select(-z_score)
+
+
+
+```
+
+
+
+
+
+# Distribution of the subjective duration and the timing error for 45s and 90s tasks
+```{r}
+
+#Subjective duration 
+
+Nback_blocks %>%
+  ggplot(aes(translated)) + 
+  facet_grid(.~duration) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=1,
+                   colour = "black" , fill="white") + 
+      geom_density(aes(y = ..density..*(5000 * 1)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "Subjective Duration", title ="Distribution of the subjective duration for 45s and 90s tasks") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5))
+
+
+#Timing error
+
+# jpeg("DistribDDS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(timing_error)) + 
+  facet_grid(.~duration) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=1,
+                   colour = "black" , fill="white") + 
+      geom_density(aes(y = ..density..*(5000 * 1)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "timing error", title ="Distribution of the timing errorfor 45s and 90s tasks") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5))
+  # scale_x_continuous(breaks = seq(from = -90, to = 60, by = 15),
+  # limits = c(-100, 70))
+# dev.off()
+
+#Relative Duration
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#HR vs CRR
+```{r}
+
+Nback_blocks %>%
+  filter(nback == "3back") %>%
+  ggplot() + geom_point(aes(CR, HR,  colour = HR > 0.1 & CR > 0.1), size = 0.5) +
+ labs(title ="Correct Rejection Rate and Hit Rate for each 3-back trial") + 
+   theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
+
+```
 ##Distributions
 
 #Age distribution
@@ -258,17 +430,16 @@ datadir <- "data_exp_15096-16303_FR"
 datafiles <- list.files(datadir,'S1_Demographics.csv',full.names = T)
 
 demo <- read.csv2(datafiles, sep = ",") %>%
-  mutate(ID = PID)
+  mutate(PID = PPID)
 
-IDnback <- Nback_blocks %>%
-  group_by(ID) %>%
+PIDnback <- Nback_blocks %>%
+  group_by(PID) %>%
   summarise()
-IDnback
+PIDnback
 
-#take only data from participants who took part in N-back task
 DemoNbackS1 <- demo %>%
-  filter(ID %in% IDnback$ID) %>%
-  select(`ID`, `Question.Key`, `Response`) %>%
+  filter(PID %in% PIDnback$PID) %>%
+  select(`PID`, `Question.Key`, `Response`) %>%
   filter(Question.Key == "Age-year" | Question.Key == "Age-month" | Question.Key == "sex") %>%
   pivot_wider(values_from = Response, names_from = Question.Key) %>%
   mutate(Age = as.numeric(as.character(`Age-year`)) + as.numeric(as.character(`Age-month`))/12,
@@ -300,51 +471,6 @@ DemoNbackS1 %>%
 ```
 
 
-# %Correct distribution, for 1-back and 3-back (after outliers removal)
-```{r}
-
- perf_1back <-  Nback_blocks %>%
-  filter(nback == "1back") 
- perf_3back <-  Nback_blocks %>%
-  filter(nback == "3back") 
- 
- # QQ plot
- title <- ggdraw() + 
-   draw_label("Normal QQ plot of Hit Rate for 1-back and 3-back",
-    fontface = 'bold', size = 13) +
-  theme(plot.margin = margin(0, 0, 15 ,0))
-
-plot_row = plot_grid(ggqqplot(perf_1back$perf, size = 0.2),
-                     ggqqplot(perf_3back$perf, size = 0.2), 
-                     nrow=1, labels=c('1-back', '3-back'),
-  label_size = 11,
-  hjust = -0.5, vjust = -0.5)
-# jpeg("QQplotperfS1.jpg", width = 4000, height = 2500, units = "px",res=600)
-  plot_grid(
-  title, plot_row,
-  ncol = 1,
-  rel_heights = c(0.1, 1))
-# dev.off()
-
-#shapiro-wilk test  H0 = normal
-shapiro.test(perf_1back$perf)
-shapiro.test(perf_3back$perf)
-
-# jpeg("DistributionperfS1.jpg", width = 4000, height = 2500, units = "px",res=600)
-Nback_blocks %>%
-  ggplot(aes(perf)) + 
-  facet_grid(.~nback) +
-           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
-                   colour = "black" , fill="white") + 
-      geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.4, fill="lightgreen") +
-  labs(y = "count", x = "N-back performance", title ="Distribution of the n-back performance for 1-back and 3-back") + 
-  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
-  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
-                 limits = c(0,1))
- # dev.off()
-
-#the two distribution are skewed ! + ceilin effect for 1back
-```
 
 # mean Reaction Time distribution for 1-back and 3-back (after outliers removal)
 ```{r}
@@ -432,101 +558,7 @@ shapiro.test(mRT_1back$normRT)
 shapiro.test(mRT_3back$normRT)
 ```
 
-# False Alarm Rate distribution for 1-back and 3-back (after outliers removal)
-```{r}
-FAR_1back <-  Nback_blocks %>%
-  filter(nback == "1back") 
- FAR_3back <-  Nback_blocks %>%
-  filter(nback == "3back") 
- 
 
- # QQ plot
- title <- ggdraw() + 
-   draw_label("Normal QQ plot of False Alarm Rate for 1-back and 3-back",
-    fontface = 'bold', size = 13) +
-  theme(plot.margin = margin(0, 0, 15 ,0))
-
-plot_row = plot_grid(ggqqplot(mRT_1back$FAR, size = 0.2),
-                     ggqqplot(mRT_3back$FAR, size = 0.2), 
-                     nrow=1, labels=c('1-back', '3-back'),
-  label_size = 11,
-  hjust = -0.5, vjust = -0.5)
-          
-# jpeg("QQplotFARS1.jpg", width = 4000, height = 2500, units = "px",res=600)
-  plot_grid(
-  title, plot_row,
-  ncol = 1,
-  rel_heights = c(0.1, 1))
-# dev.off()
-
- 
-#shapiro-wilk test  H0 = normal
-shapiro.test(FAR_1back$FAR)
-shapiro.test(FAR_3back$FAR)
-
-# jpeg("DistributionFARS1.jpg", width = 4000, height = 2500, units = "px",res=600)
-Nback_blocks %>%
-  filter(Run == 1) %>%
-  ggplot(aes(FAR)) + 
-  facet_grid(.~nback) +
-           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
-                   colour = "black" , fill="white") + 
-      geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.4, fill="lightgreen") +
-  labs(y = "count", x = "False Alarm Rate", title ="False Alarm Rate Distribution for 1-back and 3-back") + 
-  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
-  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
-                 limits = c(-0.01,1))
- # dev.off()
-
-#the two distribution are skewed ! + ceilin effect for 1back
-```
-
-# Distribution of duration deviation, relative duration and relative deviation for 45s and 90s tasks
-```{r}
-
-#Duration Deviation
-
-# jpeg("DistribDDS1.jpg", width = 4000, height = 2500, units = "px",res=600)
-Nback_blocks %>%
-  ggplot(aes(duration_deviation)) + 
-  facet_grid(.~duration) +
-           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=1,
-                   colour = "black" , fill="white") + 
-      geom_density(aes(y = ..density..*(5000 * 1)), alpha=.4, fill="lightgreen") +
-  labs(y = "count", x = "Duration Deviation", title ="Distribution of the duration deviation for 45s and 90s tasks") + 
-  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
-  scale_x_continuous(breaks = seq(from = -90, to = 60, by = 15),
-  limits = c(-100, 70))
-# dev.off()
-
-#Relative Duration
-
-# jpeg("DistribRelDurS1.jpg", width = 4000, height = 2500, units = "px",res=600)
-Nback_blocks %>%
-  ggplot(aes(relative_duration)) +
-  facet_grid(.~duration) +
-           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.01,
-                   colour = "black" , fill="white") +
-      geom_density(aes(y = ..density..*(7000 * 0.01)), alpha=.4, fill="lightgreen") +
-  labs(y = "count", x = "Relative Duration", title ="Distribution of the relative deviation for 45s and 90s tasks") +
-  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
-# dev.off()
-
-#Relative Deviation
-
-# jpeg("DistribRelDevS1.jpg", width = 4000, height = 2500, units = "px",res=600)
-Nback_blocks %>%
-  ggplot(aes(relative_deviation)) +
-  facet_grid(.~duration) +
-           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.01,
-                   colour = "black" , fill="white") +
-      geom_density(aes(y = ..density..*(7000 * 0.01)), alpha=.4, fill="lightgreen") +
-  labs(y = "count", x = "Relative Deviation", title ="Distribution of the relative deviation for 45s and 90s tasks") +
-  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
-# dev.off()
-
-
-```
 
 
 
@@ -736,7 +768,7 @@ plot_row = plot_grid(perf_perf, perf_FAR, perf_mRT, nrow=1, labels=c('A', 'B', '
 
 #%Correct VS Run for each participant
 perf_Runs <- Nback_blocks %>% 
-  group_by(ID) %>%
+  group_by(PID) %>%
   group_by(nback, .add = T) %>%
   group_by(Run, .add =T) %>%
   group_by(duration, .add = T) %>%
@@ -874,26 +906,26 @@ plot_row = plot_grid(perf_Run_Nback, FAR_Run_Nback, RT_Run_Nback, nrow=1, labels
 
 data <- Nback_blocks
 
-M1 <-lmer(perf ~ duration + (1|ID), data=data, REML=FALSE)
-M2 <-lmer(perf ~ duration + nback + (1|ID), data=data, REML=FALSE)
+M1 <-lmer(perf ~ duration + (1|PID), data=data, REML=FALSE)
+M2 <-lmer(perf ~ duration + nback + (1|PID), data=data, REML=FALSE)
 lrtest(M1, M2) #M1 nested #M2 more complex   p <0.05  #the complex model is significantly more accurate
 
-M3 <-lmer(perf ~ duration + ILI + (1|ID), data=data, REML=FALSE)
+M3 <-lmer(perf ~ duration + ILI + (1|PID), data=data, REML=FALSE)
 lrtest(M2, M3)  # p <0.05
 
-M4 <-lmer(perf ~ duration + nback + ILI + (1|ID), data=data, REML=FALSE)
+M4 <-lmer(perf ~ duration + nback + ILI + (1|PID), data=data, REML=FALSE)
 lrtest(M3, M4)  # p <0.05
 
-M5 <-lmer(perf ~ duration + nback + ILI + (duration|ID), data=data, REML=FALSE)
+M5 <-lmer(perf ~ duration + nback + ILI + (duration|PID), data=data, REML=FALSE)
 lrtest(M4, M5)  # n.s
 
-M6 <-lmer(perf ~ duration + nback + ILI + (nback|ID), data=data, REML=FALSE)
+M6 <-lmer(perf ~ duration + nback + ILI + (nback|PID), data=data, REML=FALSE)
 lrtest(M4, M6)   # p <0.05
 
-M7 <-lmer(perf ~ duration + nback + ILI + (nback + ILI|ID), data=data, REML=FALSE)
+M7 <-lmer(perf ~ duration + nback + ILI + (nback + ILI|PID), data=data, REML=FALSE)
 lrtest(M6, M7) # n.s
 
-M8 <-lmer(perf ~ duration * nback * ILI + (nback + ILI|ID), data=data, REML=FALSE)
+M8 <-lmer(perf ~ duration * nback * ILI + (nback + ILI|PID), data=data, REML=FALSE)
 lrtest(M6, M8)   # n.s
 
 
@@ -919,7 +951,7 @@ AICtable
 #Main effects on %correct
 ```{r}
 
-M8 <-lmer(perf ~ duration * nback * ILI + (nback + ILI|ID), data=data, REML= T)
+M8 <-lmer(perf ~ duration * nback * ILI + (nback + ILI|PID), data=data, REML= T)
 
 # -- Main effect of Interaction duration / nback / ILI
 
@@ -1060,7 +1092,7 @@ Run_VS_DD
 
 
 DD_Runs <- Nback_blocks %>% 
-  group_by(ID) %>%
+  group_by(PID) %>%
   group_by(nback, .add = T) %>%
   group_by(Run, .add =T) %>%
   group_by(duration, .add = T) %>%
@@ -1108,26 +1140,26 @@ wilcox.test(Run2DD,Run3DD, paired = TRUE, alternative = "two.sided")  #no signif
 
 data <- Nback_blocks
 
-M1 <-lmer(duration_deviation ~ duration + (1|ID), data=data, REML=FALSE)
-M2 <-lmer(duration_deviation ~ duration + nback + (1|ID), data=data, REML=FALSE)
+M1 <-lmer(duration_deviation ~ duration + (1|PID), data=data, REML=FALSE)
+M2 <-lmer(duration_deviation ~ duration + nback + (1|PID), data=data, REML=FALSE)
 lrtest(M1, M2) #M1 nested #M2 more complex   p <0.05  #the complex model is significantly more accurate
 
-M3 <-lmer(duration_deviation ~ duration + nback + ILI + (1|ID), data=data, REML=FALSE)
+M3 <-lmer(duration_deviation ~ duration + nback + ILI + (1|PID), data=data, REML=FALSE)
 lrtest(M2, M3) #M2 nested #M3 more complex   p <0.05  #the complex model is significantly more accurate
 
-M4 <-lmer(duration_deviation ~ duration * nback * ILI + (1|ID), data=data, REML=FALSE)
+M4 <-lmer(duration_deviation ~ duration * nback * ILI + (1|PID), data=data, REML=FALSE)
 lrtest(M3, M4)  # n.s
 
-M5 <-lmer(duration_deviation ~ duration + nback + ILI + (duration|ID), data=data, REML=FALSE)
+M5 <-lmer(duration_deviation ~ duration + nback + ILI + (duration|PID), data=data, REML=FALSE)
 lrtest(M3, M5)  #M3 nested #5 more complex   p > 0.05  #the complex model is not significantly more accurate
 
-M6 <-lmer(duration_deviation ~ duration + nback + ILI + (duration + nback|ID), data=data, REML=FALSE)
+M6 <-lmer(duration_deviation ~ duration + nback + ILI + (duration + nback|PID), data=data, REML=FALSE)
 lrtest(M5, M6)   #M5 nested #5 more complex   p > 0.05  #the complex model is not significantly more accurate
 
-M7 <-lmer(duration_deviation ~ duration + nback + ILI + (duration + nback + ILI|ID), data=data, REML=FALSE)
+M7 <-lmer(duration_deviation ~ duration + nback + ILI + (duration + nback + ILI|PID), data=data, REML=FALSE)
 lrtest(M6, M7) # n.s
 
-M8 <-lmer(duration_deviation ~ duration * nback * ILI + (duration + nback|ID), data=data, REML=FALSE)
+M8 <-lmer(duration_deviation ~ duration * nback * ILI + (duration + nback|PID), data=data, REML=FALSE)
 lrtest(M6, M8)   # n.s
 
 
@@ -1152,7 +1184,7 @@ AICtable
 
 #Main effects
 ```{r}
-M6 <-lmer(duration_deviation ~ duration + nback + ILI + (duration + nback|ID), data=data, REML= T)
+M6 <-lmer(duration_deviation ~ duration + nback + ILI + (duration + nback|PID), data=data, REML= T)
 summary(M6)
 
 stargazer(M6, type = "text",
@@ -1191,7 +1223,7 @@ plot(ILI.emm, by = NULL, comparisons = TRUE, adjust = "mvt",
 
 
 #Cross-effect ?
-M8 <-lmer(duration_deviation ~ duration * nback * ILI + (duration + nback|ID), data=data, REML= T)
+M8 <-lmer(duration_deviation ~ duration * nback * ILI + (duration + nback|PID), data=data, REML= T)
 summary(M8)
 
 # -- Main effect of Interaction duration / nback / ILI
@@ -1232,7 +1264,7 @@ plot(x = data$duration_deviation,
 abline(h = 0, lty = 2)
 
 # Participants
-boxplot(R1 ~ ID,   
+boxplot(R1 ~ PID,   
         ylab = "Normalized residuals",
         data = data, xlab = "Participant")
 abline(h = 0, lty = 2)
@@ -1470,15 +1502,15 @@ likert_vs_nback
 
 data = Nback_blocks
 
-m1 = clmm(likert_n ~ duration +(1|ID), data, Hess=T, nAGQ= 7)
+m1 = clmm(likert_n ~ duration +(1|PID), data, Hess=T, nAGQ= 7)
 
-m2 = clmm(likert_n ~ duration + nback + (1|ID), data, Hess=T, nAGQ= 7)
+m2 = clmm(likert_n ~ duration + nback + (1|PID), data, Hess=T, nAGQ= 7)
 lrtest(m1,m2)  # p < 0.05
 
-m3 = clmm(likert_n ~ duration + nback + ILI + (1|ID), data, Hess=T, nAGQ= 7)
+m3 = clmm(likert_n ~ duration + nback + ILI + (1|PID), data, Hess=T, nAGQ= 7)
 lrtest(m2,m3)  # p < 0.05
 
-m4 = clmm(likert_n ~ duration * nback * ILI + (1|ID), data, Hess=T, nAGQ= 7)
+m4 = clmm(likert_n ~ duration * nback * ILI + (1|PID), data, Hess=T, nAGQ= 7)
 lrtest(m3,m4)  # p > 0.05  n.s
 
 
@@ -1498,7 +1530,7 @@ summary(m4)
 
 #PoTJ Main effects
 ```{r}
-m3 = clmm(likert_n ~ duration * nback * ILI + (1|ID), data, Hess=T, nAGQ= 7)
+m3 = clmm(likert_n ~ duration * nback * ILI + (1|PID), data, Hess=T, nAGQ= 7)
 summary(m3)
 
 # ----- Pairwise comparisons ----------------------
@@ -1578,25 +1610,25 @@ Boxplot_DD_Likert
 cluster NDD + perf
 ```{r}
 data <- clean_Nback_blocks %>%
-  group_by(ID, nback) %>% 
+  group_by(PID, nback) %>% 
    summarise(perf = mean(perf),
             NDD = mean(NDD)) %>%
   filter(!is.na(NDD) & !is.na(perf))
 
-data %>% group_by(ID) %>% summarize(ID = first(ID))
+data %>% group_by(PID) %>% summarize(PID = first(PID))
 
-perf1back <- aggregate(perf ~ ID, filter(data, nback == "1back"), mean) 
-perf3back <- aggregate(perf ~ ID, filter(data, nback == "3back"), mean)
-NDD1back <- aggregate(NDD ~ ID, filter(data, nback == "1back"), mean) 
-NDD3back <- aggregate(NDD ~ ID, filter(data, nback == "3back"), mean)
+perf1back <- aggregate(perf ~ PID, filter(data, nback == "1back"), mean) 
+perf3back <- aggregate(perf ~ PID, filter(data, nback == "3back"), mean)
+NDD1back <- aggregate(NDD ~ PID, filter(data, nback == "1back"), mean) 
+NDD3back <- aggregate(NDD ~ PID, filter(data, nback == "3back"), mean)
 
-IDperf = left_join(perf1back, perf3back, by = "ID") %>%
+PIDperf = left_join(perf1back, perf3back, by = "PID") %>%
   rename(perf1back = perf.x, perf3back = perf.y )
 
-IDNDD = left_join(NDD1back, NDD3back, by = "ID") %>%
+PIDNDD = left_join(NDD1back, NDD3back, by = "PID") %>%
   rename(NDD1back = NDD.x, NDD3back = NDD.y )
 
-perfNDD <- left_join(IDperf, IDNDD, by = "ID") %>%
+perfNDD <- left_join(PIDperf, PIDNDD, by = "PID") %>%
   filter(!is.na(perf3back))
  
  
@@ -1633,8 +1665,8 @@ fviz_cluster(classif, data = coord,
              )
 #dimension 3, not important
 
-perfNDD <- perfNDD %>% select(ID, cluster)
-data2 <- left_join(clean_Nback_blocks, perfNDD, by = "ID")
+perfNDD <- perfNDD %>% select(PID, cluster)
+data2 <- left_join(clean_Nback_blocks, perfNDD, by = "PID")
 
 #test cluster normality
 data2%>%
@@ -1647,7 +1679,7 @@ data2 %>%
     geom_point(size= 0.2) 
 
 
-M14 <- lmer(duration_deviation ~  cluster *nback  + (nback + duration | ID), data2)
+M14 <- lmer(duration_deviation ~  cluster *nback  + (nback + duration | PID), data2)
 summary(M14)
 
 stargazer(M14, type = "text",
@@ -1691,22 +1723,22 @@ pwpp(emmeans(M11, ~ duration | ILI))
 #Cluster
 ```{r}
 data <- clean_Nback_blocks %>%
-  group_by(ID, nback) %>% 
+  group_by(PID, nback) %>% 
    summarise(perf = mean(perf)) %>%
   filter(!is.na(perf))
 
-data %>% group_by(ID) %>% summarize(ID = first(ID))
+data %>% group_by(PID) %>% summarize(PID = first(PID))
 
-perf1back <- aggregate(perf ~ ID, filter(data, nback == "1back"), mean) 
-perf3back <- aggregate(perf ~ ID, filter(data, nback == "3back"), mean)
+perf1back <- aggregate(perf ~ PID, filter(data, nback == "1back"), mean) 
+perf3back <- aggregate(perf ~ PID, filter(data, nback == "3back"), mean)
 
 
-IDperf = left_join(perf1back, perf3back, by = "ID") %>%
+PIDperf = left_join(perf1back, perf3back, by = "PID") %>%
   rename(perf1back = perf.x, perf3back = perf.y ) %>%
   filter(!is.na(perf3back))
  
  
-coord = IDperf %>%
+coord = PIDperf %>%
   select(perf1back, perf3back) 
 
 fviz_nbclust(coord, kmeans, method = "silhouette")
@@ -1726,8 +1758,8 @@ set.seed(1234)
 classif <- kmeans(coord, centers = 4, nstart = 25)
 # Clustering K-means montrant le groupe de chaque individu
 
-IDperf$cluster <- classif$cluster
-IDperf = IDperf %>% mutate(cluster = as.factor(cluster))
+PIDperf$cluster <- classif$cluster
+PIDperf = PIDperf %>% mutate(cluster = as.factor(cluster))
 classif
 str (classif)
 
@@ -1739,8 +1771,8 @@ cluster <- fviz_cluster(classif, data = coord,
              )
 #dimension 3, not important
 
-IDperf <- IDperf %>% select(ID, cluster)
-data3 <- left_join(clean_Nback_blocks, IDperf, by = "ID")
+PIDperf <- PIDperf %>% select(PID, cluster)
+data3 <- left_join(clean_Nback_blocks, PIDperf, by = "PID")
 
 #test cluster normality
 data3%>%
@@ -1753,7 +1785,7 @@ data3%>%
     geom_point(size= 0.2) 
 
 
-M14 <- lmer(duration_deviation ~  cluster  + (nback + duration + cluster| ID), data3)
+M14 <- lmer(duration_deviation ~  cluster  + (nback + duration + cluster| PID), data3)
 summary(M14)
 
 stargazer(M14, type = "text",
@@ -1822,8 +1854,8 @@ plot_row = plot_grid(gap_stat, size = 0.8,
 
 #bivaried analysis
 ```{r}
-ID_var = clean_Nback_blocks %>%
-  group_by(ID, duration, ILI) %>%
+PID_var = clean_Nback_blocks %>%
+  group_by(PID, duration, ILI) %>%
   select(-likert, -perf, -FAR, - block_nb, - translated,  -mRT, -MR, -CRR, -HR, -NDD, -likert_n)%>%
 pivot_wider(values_from = duration_deviation, names_from = nback) %>%
   rename(DD1back = "1back", DD3back = "3back") %>%  
@@ -1831,7 +1863,7 @@ pivot_wider(values_from = duration_deviation, names_from = nback) %>%
          varabs = abs(DD3back-DD1back)) %>%
   filter(!is.na(DD1back), !is.na(DD3back))
 
-# varID <- ID_var%>%
+# varPID <- PID_var%>%
 #   filter(Run == 1) %>%
 #   ggplot(aes(var)) + 
 #   facet_grid(ILI~duration) +
@@ -1839,9 +1871,9 @@ pivot_wider(values_from = duration_deviation, names_from = nback) %>%
 #                    colour = "black" , fill="white") + 
 #   labs(y = "count", x = "coeff", title ="variation between 1-back and 3-back estimates") + 
 #   theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
-# varID
+# varPID
 
-ggplot(ID_var, aes(DD1back, varabs)) +
+ggplot(PID_var, aes(DD1back, varabs)) +
   facet_grid(.~duration) +
   geom_hex(bins = 20) +
   scale_fill_continuous(type = "viridis") +
@@ -1852,7 +1884,7 @@ ggplot(ID_var, aes(DD1back, varabs)) +
   theme_bw()
 
 
-# M = lm(var ~ DD1back, ID_var)
+# M = lm(var ~ DD1back, PID_var)
 # summary(M)
 
 #valeur absolue de l'écart
@@ -1914,9 +1946,9 @@ fviz_cluster(classif, data = coord,
 
 rand <- rand %>%
   select(-grpvar) %>%
-  rename(ID = grp)
+  rename(PID = grp)
 
-data <- left_join(data, rand, by = c("ID")) %>%
+data <- left_join(data, rand, by = c("PID")) %>%
   mutate(cluster = as.factor(cluster))
 
 
@@ -1928,7 +1960,7 @@ data%>%
 
 
 #verification
-M14 <-lmer(duration_deviation~ duration * ILI + cluster +(1+nback + duration  |ID), data=data, REML= T)
+M14 <-lmer(duration_deviation~ duration * ILI + cluster +(1+nback + duration  |PID), data=data, REML= T)
 summary(M14)
 ```
 
@@ -2044,6 +2076,207 @@ plot_row <- plot_grid(SDvar_duration_nback, CV_WM_duration, nrow=1, labels=c('A'
 
 
 
+#Formatting duration estimations (old)
+```{r}
+
+#Extract data for session 1
+datadir <- "data_exp_15096-16303_FR_processed"
+datafiles <- list.files(datadir,'S.*_nback.csv',full.names = T)
+
+Nback = read.csv2(datafiles[1], sep = ",")
+
+
+# Each row is a participant response
+#Defining if the letter is a target letter and if an answer is a hit, a correct reject, a miss or a false alarm. 
+Nback_all <- Nback %>%           #133232 observations
+   filter(!is.na(translated)) %>%
+         mutate(PID = as.factor(Participant.Private.PID),
+         correct.reject = ifelse(response_arrow == "Down" & Correct == TRUE, 1, 0),    
+         miss = ifelse(response_arrow == "Down" & Correct == FALSE, 1, 0),
+         hit = ifelse(response_arrow == "Left" & Correct == TRUE, 1, 0),
+         false.alarm = ifelse(response_arrow == "Left" & Correct == F, 1, 0),
+         target = ifelse(hit == 1 | miss == 1, "target", "non-target"))
+
+#From the subjective duration estimation (SD) and the objective task duration (OD), defining:
+#Duration deviation = SD - OD
+#Relative duration = SD/OD
+#Relative deviation = (SD - OD)/OD
+Nback_all <- Nback_all %>% 
+    mutate(duration_deviation = translated - parse_number(as.character(duration)))
+
+         #   relative_deviation = (translated - parse_number(as.character(duration)))/ parse_number(as.character(duration)),
+         # relative_duration = translated / parse_number(as.character(duration)))
+
+
+#paradigmatic threshold on RT: every correct response that took less than 200ms is discarded
+# mRT <- Nback_all %>% 
+#   mutate(Reaction.Time = as.numeric(as.character(Reaction.Time))) %>%
+#   filter(Correct == T) %>%  
+#   filter(Reaction.Time > 200) %>% # 2330 out of 111213 correct responses --> 2%
+#   group_by(block_nb) %>%
+# summarize(mRT = mean(as.numeric(as.character(Reaction.Time))))
+
+
+# Each row is a different trial
+Nback_blocks <- Nback_all %>%    #3785 trials
+  group_by(PID) %>%
+  group_by(Run, .add = T) %>%
+  group_by(nback, .add =T) %>%
+  group_by(ILI, duration, block_nb, .add = T) %>%
+  summarise(condition = first(condition),
+            retro.pro = first(retro.pro),
+            likert = first(likert),
+            translated = first(translated),
+            duration_deviation = first(duration_deviation),
+            relative_duration = first(relative_duration),
+            relative_deviation = first(relative_deviation),
+            nb_target = sum(target == "target"),
+            nb_resp = sum(target == "target" | target == "non-target"),
+            nb_letter = 0,
+            perf = sum(Correct)/nb_resp,
+            HR = sum(hit)/sum(target == "target"),
+            FAR = sum(false.alarm)/sum(target == "non-target"),
+            CRR = sum(correct.reject)/sum(target == "non-target"),
+            MR = sum(miss)/sum(target == "target")) %>%
+  ungroup() 
+
+
+Nback_blocks <- Nback_blocks %>%
+  mutate(nb_letter = ifelse(
+    duration == "45s" & ILI == "1500ms" , 30, nb_letter),
+ nb_letter = ifelse(
+    duration == "45s" & ILI == "1800ms" , 25, nb_letter),
+ nb_letter = ifelse(
+    duration == "90s" & ILI == "1500ms" , 60, nb_letter),
+  nb_letter = ifelse(
+    duration == "90s" & ILI == "1800ms" , 50, nb_letter),
+ no_resp = nb_letter -nb_resp)
+
+
+
+
+
+ 
+# %Correct (perf) = Hit Rate + Correct rejection Rate / number of letters displayed during the trial
+Nback_blocks <- Nback_blocks %>%
+  mutate(
+ likert = fct_relevel(likert, "Très lentement", "Lentement",  "Normalement", "Rapidement", "Très rapidement"),
+  likert_n = as.factor(recode(likert, "Très lentement" = -2, "Lentement" = -1, "Normalement" = 0, "Rapidement" = 1, "Très rapidement" = 2)))
+
+
+Nback_blocks <- left_join(Nback_blocks, mRT)
+paged_table(Nback_blocks) #3785 trials
+
+```
+
+
+
+
+
+
+# OUTLIERS: Removing |z_score| > 2 (2 standard deviation from the mean) on subjects' performance and duration estimation + paradigmatic threshold               #3785 --> 3264 trials (521 outliers ~ 14 %)
+```{r}
+#Outliers: duration estimation
+
+# Nback_blocks <- Nback_blocks %>%
+#   group_by(duration) %>%
+#   mutate(z_score = scale(duration_deviation))
+# 
+# estimation_outliers <- Nback_blocks %>%
+# filter(abs(z_score) >= 2)    #182 outliers (~5.5 %)
+  
+# Nback_blocks %>%
+#   ggplot() + geom_histogram(mapping = aes(z_score))
+
+# Nback_blocks <-  Nback_blocks %>%        #3428 -> 3246 trials
+# filter(abs(z_score) < 2 )
+
+# Nback_blocks %>%
+# ggplot() + geom_histogram(mapping = aes(z_score))
+
+
+
+# #Outliers: Performance (perf = correct response rate)
+# 
+# Nback_blocks <- Nback_blocks %>%
+#   group_by(nback) %>%
+#   mutate(z_score2 = scale(perf))
+# 
+# perf_outliers <- Nback_blocks %>%  #194 outliers (~6 %) (87 for 1-back tasks)
+# filter(abs(z_score2) >= 2) 
+# 
+# # Nback_blocks %>%
+#   # ggplot() + geom_histogram(mapping = aes(z_score2))
+# 
+# Nback_blocks <-  Nback_blocks %>%      #3246 -> 3052
+# filter(abs(z_score2) < 2) %>%
+#   select(-z_score, -z_score2)
+
+
+
+# paradigmatic thresholds on duration estimation: 
+#the estimate has to be in the interval [1/6* Task duration ; 2* Task duration]
+
+paradigm_estim_outliers <- Nback_blocks %>%   # 95 outliers (~3%)
+  filter(translated <= (1/6) * parse_number(as.character(duration)) | translated >= 2* parse_number(as.character(duration)))
+
+Nback_blocks <- Nback_blocks %>%       # 3246 -> 3151 trials
+  filter(translated > (1/6) * parse_number(as.character(duration)) & translated < 2* parse_number(as.character(duration)))
+
+```
+
+
+
+
+
+# False Alarm Rate distribution for 1-back and 3-back (after outliers removal)
+```{r}
+FAR_1back <-  Nback_blocks %>%
+  filter(nback == "1back") 
+ FAR_3back <-  Nback_blocks %>%
+  filter(nback == "3back") 
+ 
+
+ # QQ plot
+ title <- ggdraw() + 
+   draw_label("Normal QQ plot of False Alarm Rate for 1-back and 3-back",
+    fontface = 'bold', size = 13) +
+  theme(plot.margin = margin(0, 0, 15 ,0))
+
+plot_row = plot_grid(ggqqplot(mRT_1back$FAR, size = 0.2),
+                     ggqqplot(mRT_3back$FAR, size = 0.2), 
+                     nrow=1, labels=c('1-back', '3-back'),
+  label_size = 11,
+  hjust = -0.5, vjust = -0.5)
+          
+# jpeg("QQplotFARS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+  plot_grid(
+  title, plot_row,
+  ncol = 1,
+  rel_heights = c(0.1, 1))
+# dev.off()
+
+ 
+#shapiro-wilk test  H0 = normal
+shapiro.test(FAR_1back$FAR)
+shapiro.test(FAR_3back$FAR)
+
+# jpeg("DistributionFARS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  filter(Run == 1) %>%
+  ggplot(aes(FAR)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") + 
+      geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.4, fill="lightgreen") +
+  labs(y = "count", x = "False Alarm Rate", title ="False Alarm Rate Distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+                 limits = c(-0.01,1))
+ # dev.off()
+
+#the two distribution are skewed ! + ceilin effect for 1back
+```
 
 
 
@@ -2052,5 +2285,125 @@ plot_row <- plot_grid(SDvar_duration_nback, CV_WM_duration, nrow=1, labels=c('A'
 
 
 
+# HR OUTLIERS: Removing |z_score| > 2 (2 standard deviation from the mean) on subjects' performance
+```{r}
+#Outliers: HR
 
+# Nback_blocks <- Nback_blocks %>%
+#   group_by(nback) %>%
+#   mutate(z_score = scale(HR))
+# 
+# HR_outliers <- Nback_blocks %>%  #190 outliers (~6 %) (80 for 3-back tasks)
+# filter(abs(z_score) > 2)
+# 
+# Nback_blocks %>%
+# ggplot() + geom_histogram(mapping = aes(z_score)) + facet_grid(.~nback)
+# 
+# Nback_blocks <-  Nback_blocks %>%      #3461 -> 3271
+# filter(abs(z_score) <= 2) %>%
+#   select(-z_score)
+# 
+# 
+# # jpeg("DistributionHRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+# Nback_blocks %>%
+#   ggplot(aes(HR)) + 
+#   facet_grid(.~nback) +
+#            geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+#                    colour = "black" , fill="white") + 
+#       geom_density(aes(y = ..density..*(7000 * 0.02)), alpha=.4, fill="lightgreen") +
+#   labs(y = "count", x = "HR", title ="Hit Rate (HR) distribution for 1-back and 3-back") + 
+#   theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+#   scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+#                  limits = c(-0.01,1.20))
+#  # dev.off()
+# 
+# 
+# 
+# # jpeg("DistributionHRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+# Nback_blocks %>%
+#   ggplot(aes(FA)) + 
+#   facet_grid(.~nback) +
+#            geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+#                    colour = "black" , fill="white") + 
+#       geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.4, fill="lightgreen") +
+#   labs(y = "count", x = "FA", title ="False alarm rate (FA) distribution for 1-back and 3-back") + 
+#   theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+#   scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+#                  limits = c(-0.01,1.01))
+ # dev.off()
+
+
+```
+
+
+
+# FA OUTLIERS: Removing |z_score| > 2 (2 standard deviation from the mean) on subjects' performance
+```{r}
+# 
+# Nback_blocks <- Nback_blocks %>%
+#   group_by(nback) %>%
+#   mutate(z_score = scale(FA))
+# 
+# FA_outliers <- Nback_blocks %>%  #133 outliers (~4 %) (81 for 3-back tasks)
+# filter(abs(z_score) >= 2)
+# 
+# Nback_blocks %>%
+# ggplot() + geom_histogram(mapping = aes(z_score)) + facet_grid(.~nback)
+# 
+# Nback_blocks <-  Nback_blocks %>%      # 3271 --> 3138
+# filter(abs(z_score) < 2) %>%
+#   select(-z_score)
+
+```
+
+```{r}
+
+# #HR DISTRIBUTION
+# 
+# # jpeg("DistributionHRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+# Nback_blocks %>%
+#   ggplot(aes(HR)) + 
+#   facet_grid(.~nback) +
+#            geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+#                    colour = "black" , fill="white") + 
+#       geom_density(aes(y = ..density..*(7000 * 0.02)), alpha=.4, fill="lightgreen") +
+#   labs(y = "count", x = "HR", title ="Hit Rate (HR) distribution for 1-back and 3-back") + 
+#   theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+#   scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+#                  limits = c(-0.01,1.20))
+#  # dev.off()
+# 
+# #FA DISTRIBUTION
+# 
+# 
+# # jpeg("DistributionHRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+# Nback_blocks %>%
+#   ggplot(aes(FA)) + 
+#   facet_grid(.~nback) +
+#            geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+#                    colour = "black" , fill="white") + 
+#       geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.4, fill="lightgreen") +
+#   labs(y = "count", x = "FA", title ="False alarm rate (FA) distribution for 1-back and 3-back") + 
+#   theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+#   scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+#                  limits = c(-0.01,1.01))
+#  # dev.off()
+# 
+# #CR DISTRIBUTION
+# 
+# 
+# # jpeg("DistributionHRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+# Nback_blocks %>%
+#   ggplot(aes(CR)) + 
+#   facet_grid(.~nback) +
+#            geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+#                    colour = "black" , fill="white") + 
+#       geom_density(aes(y = ..density..*(3000 * 0.02)), alpha=.2, fill="lightgreen") +
+#   labs(y = "count", x = "CR", title ="Correct Rejection Rate (CR) distribution for 1-back and 3-back") + 
+#   theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+#   scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+#                  limits = c(-0.01,1.20))
+ # dev.off()
+
+```
 ```

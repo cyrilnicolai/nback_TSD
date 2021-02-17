@@ -28,23 +28,14 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = F)
 
 library(tidyverse)
 library(rmarkdown)
-# library(ggpubr)
 library(viridis)
 library(cowplot)
-library(RColorBrewer)
-# library(R.utils)
+# library(RColorBrewer)
 
 library(lme4)
 library(lmtest)
 library(emmeans)
 library(stargazer)
-# library(ggeffects)
-# library(psycho)
-
-# library(factoextra)
-# library(NbClust)
-# library(cluster)
-# library(moments)
 library(ordinal)
 ```
 
@@ -91,11 +82,10 @@ cbPalette4 <- c( "#56B4E9", "#009E73", "#E69F00", "#D55E00", "#CC79A7")
 cbPalette5 <- c( "#CC79A7", "#009E73")
 ```
 
-
-
-
 #Extracting and merge data from S1 and S3
+
 ```{r}
+
 # Extracting S1
 
 datadir <- "data_exp_15096-16303_FR_processed"
@@ -754,6 +744,8 @@ RD_90s_3back
 ```{r}
 
 #Likelihood ratio test
+
+data = NbackL_blocks
 
 M1 <-lmer(duration_deviation ~ session + (1|ID), data=data, REML=FALSE)
 M2 <-lmer(duration_deviation ~ session + (duration|ID), data=data, REML=FALSE)
