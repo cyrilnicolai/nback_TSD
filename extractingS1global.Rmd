@@ -21,7 +21,6 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = F)
 ```{r, include= F}
 library(tidyverse)
 source('helpers.R')
-library(rmarkdown)
 library(stringr)
 ```
 
@@ -30,8 +29,8 @@ library(stringr)
 ##Extracting 1-Back
 
 
-OrigNback <- gimmedata(DataDir = file.path(params$rootdir,'data'),UniqueName = '.back',Session = '1') 
-#1,760,000 obs
+# OrigNback <- gimmedata(DataDir = file.path(params$rootdir,'data'),UniqueName = '.back',Session = '1') 
+#1,774,859 obs
 
 Nback <- OrigNback  %>%
   filter(str_detect(display, "block1back") | str_detect(display, "block3back")) %>%
@@ -55,38 +54,49 @@ Nback <- OrigNback  %>%
                           country = ifelse(country =="16144", "Turkey", country),
                           country = ifelse(country =="16095", "Italy", country),
                           country = ifelse(country == "16257", "Canada", country),
-                          country = ifelse(country =="16271" | country == "16272", "Colombia", country),
                           country = ifelse(country =="16349" | country == "18453", "India", country),
                           country = ifelse(country == "15096" | country == "16303", "France", country),
          country = ifelse(country == "17423" |country == "19856" | country == "19880" | country == "19904"| country == "20044", "Argentina", country)) %>%
-  mutate(PID = ifelse(country %in% c("India", "Canada", "Colombia"), `Participant Private ID`, PID)) %>%
+  mutate(PID = ifelse(country %in% c("India", "Canada"), `Participant Private ID`, PID)) %>%
   select(-`Participant Private ID`)
-
-#1,492,189
+Nback
+#N-back --> 1,492,189 obs
 ```
 
 
-
+#Remove duplicates + counting ID and observations by country
 ```{r}
+Nback %>%
+  count(PID) #1191 participants
+
 #list of participants to remove --> some participants logged twice or 3 x with a different login
 #removing which participants ID that we don't want
 participants_to_rm = c("1377295", "1373766", "1347792", "1358571","1348787","1318460",  "1347194", "1366463", "1330740", "1314652")
 Nback<- Nback %>%
   filter(!(PID %in% participants_to_rm))
 
+#nb of obs by country (8 countries)
+nb_obs <- Nback %>%
+  group_by(country) %>%
+  summarise(observations = n())
+nb_obs
+
+#nb of subjects by country (8 countries)  AR:145/CA:33/FR:412/GR:133/IN:53/IT:156/JP:108/TR:146
+nb_subjects <- Nback %>%
+  group_by(PID) %>%
+  summarise(country = first(country)) %>%
+  group_by(country) %>%
+  summarise(numbersubjects = n())
+nb_subjects
 
 Nback %>%
-  count(PID)   #1190 participants
-
+  count(PID)   #1186 participants
 ```
-
 
 
 #Read spreadsheets used for each trials and add variable that indicates the number of target letters
 ```{r}
-
-
-
+#load spreadsheets
 sprdsheet1b1 <-read.csv2("/home/user/Desktop/Documents/TimeSocialDistancing/data/spreadsheet1back_1.csv",  sep = ",") %>%
   mutate(Spreadsheet = "n_back1")
 sprdsheet1b2 <-read.csv2("/home/user/Desktop/Documents/TimeSocialDistancing/data/spreadsheet1back_2.csv", sep = ",")%>%
@@ -96,7 +106,7 @@ sprdsheet3b1 <-read.csv2("/home/user/Desktop/Documents/TimeSocialDistancing/data
 sprdsheet3b2 <-read.csv2("/home/user/Desktop/Documents/TimeSocialDistancing/data/spreadsheet3back_2.csv", sep = ",")%>%
   mutate(Spreadsheet = "n_back2")
 
-
+#match spreadshets
 sprdsheet <- bind_rows(sprdsheet1b1, sprdsheet1b2, sprdsheet3b1, sprdsheet3b2) %>%
    mutate(condition = ifelse(duration == "45s"  & ILI == 1500, 1, 0),
          condition = ifelse(duration == "90s" & ILI == 1500, 2, condition),
@@ -105,8 +115,7 @@ sprdsheet <- bind_rows(sprdsheet1b1, sprdsheet1b2, sprdsheet3b1, sprdsheet3b2) %
    filter(display == "block1back" | display == "block3back") %>%
         mutate(nback = ifelse(display == "block1back", "1back", "3back"))
 
- 
-
+ #determine nb of target and non-target letters for each set of conditions
 nb_target <- sprdsheet %>%
   filter(condition != 0) %>%
   group_by(nback, Spreadsheet, condition) %>%
@@ -116,71 +125,26 @@ nb_target
 Nback <- left_join(Nback, nb_target, by = c( "nback", "Spreadsheet", "condition"))
 
 Nback %>%
-  filter(is.na(notarget))
+  filter(is.na(notarget)) #only zone.type likert, continue button...
+
 
 ```
 
 
-
-
-
-#Retrospective / prospective
+#Block number index
 ```{r}
-#add a column "block number" identifying each trial of session 1
-#keep only first Run 1 for participants that did 2 or 3 Run1
+#add a column "block number" identifying and indexing each trial of session 1
+#keep only first Run 1 for participants that did 2 or 3 Run1 for some reasons
 
 Nback <- Nback %>%
   mutate(end = `Zone.Type` == "response_rating_scale_likert",
          block_nb = cumsum(end),
          block_nb = ifelse(end == T, block_nb - 1, block_nb)) %>%
   select(-end)
-
-
-retrosp <- Nback %>%
-  group_by(PID, Run, condition) %>%
-  filter(!is.na(condition)) %>%
-  summarise(block_nb = first(block_nb),timestamp = first(timestamp)) %>%
-  group_by(PID) %>%
-  dplyr::slice(which.min(timestamp))
-
-Nback <- Nback %>%
-  mutate(retro.pro = ifelse(
-    block_nb %in% retrosp$block_nb, "retrospective",  "prospective"))
-  
-
-Nback %>%
-  group_by(block_nb) %>%
-  summarise(retro.pro = first(retro.pro)) %>%
-  count(retro.pro)
-
-
-nb_obs <- Nback %>%
-  group_by(country) %>%
-  summarise(observations = n())
-nb_obs
-
-
-
-nb_subjects <- Nback %>%
-  group_by(PID) %>%
-  summarise(country = first(country)) %>%
-  group_by(country) %>%
-  summarise(numbersubjects = n())
-nb_subjects
-
-
-Nback %>%
-  count(PID)   #1190 PID
-
-
-
 ```
 
 
-
-
-
-
+#Confinement Tracker : remove runs completed when participants were not confined
 ```{r}
 ConfTrack <- gimmedata(DataDir = file.path(params$rootdir,'data'),UniqueName = 'ConfinementTrack',Session = '1') %>%
   mutate(PID = ifelse(is.na(PID), `Participant Private ID`, PID)) %>%
@@ -205,13 +169,12 @@ ConfTrack %>%
 # Translation "during"
 during <- c("during", "pendant", "κατά τη διάρκεια", "sırasında", "durante", "規制（自粛）中", "Durante")
 
-
 tracker <- ConfTrack %>%
   filter(`Question Key` %in% 'ConfStage' | `Question Key` %in% 'ConfStage-2') %>%
   mutate(Conftrack = Response) %>%
   select(PID, Run, Conftrack)
 
-#number of occurence for each Conftracker response
+#Verify number of occurrence for each Conftracker response
 tracker %>%
   group_by(Conftrack, Run) %>%
   summarise(n = n())
@@ -221,10 +184,7 @@ Nback <- left_join(Nback, tracker, by = c("PID", "Run")) %>%
   filter(Conftrack %in% during)
 
 
-
-
-
-#verify number of participant for each country, no colombian data
+#verify number of participant for each country: AR:142/CA:33/FR:383/GR:125/IN:53-->44 (run non found in original n-back)/IT:150/JP:104/TR:146
 nb_subjects <- Nback %>%
   group_by(PID) %>%
   summarise(country = first(country)) %>%
@@ -234,16 +194,9 @@ nb_subjects
 
 
 Nback %>%
-  count(PID)   #1190 --> 1140 PID
-
-
+  count(PID)   #1187--> 1136 PID
 
 ```
-
-
-
-
-
 
 
   
@@ -255,8 +208,8 @@ Table_Attempts <- Nback %>%
   group_by(Attempt) %>%
   count() %>%
   filter(as.numeric(Attempt) <10)
-paged_table(Table_Attempts)
-# ~ out of ~    #%
+Table_Attempts
+# 590 000 first attempts, 60 000 more than one attempt
 
 Nback <- Nback %>%            #removing all responses with more than one Attempt
   filter( Zone.Type != "response_keyboard" | Attempt %in% c("1", NA))
@@ -292,16 +245,16 @@ entry_attempt <- Nback %>%
   filter( Zone.Type != "response_text_entry" | Attempt %in% c("1", NA))
   
   
-
-  #PROBLEM WITH TURKEY: DUPLICATE RESPONSE
+  #PROBLEM WITH TURKEY: Remove duplicate responses
   Nback <- Nback %>% distinct
 
-
+  Nback %>%
+  count(PID)   #1136--> 1127 PID
 ```
 
 
 
-#Number of responses   #few trials with too much responses, but lots of trials with few responses
+#Number of responses  --> few trials with too much responses, but lots of trials with few responses
 ```{r}
 Nback %>%
   group_by(block_nb, .add = T) %>%
@@ -352,7 +305,7 @@ blocktorm48 <- nbresp %>%
   filter(condition == 4 | condition == 8) %>%
   filter(is.na(block_nb) | n>107)
 
-blocktorm <- bind_rows(blocktorm15, blocktorm26, blocktorm37, blocktorm48) #8 blocks
+blocktorm <- bind_rows(blocktorm15, blocktorm26, blocktorm37, blocktorm48) #6 blocks
 
 
 Nback <- Nback %>%
@@ -362,20 +315,18 @@ blocknb <-Nback %>%
   group_by(block_nb) %>%
   summarise(n = n()) 
 blocknb
-#11,933 trials
+#15,976 trials
+
+Nback %>%
+  count(PID)   #1127--> 1126 PID
 ```
-
-
-
-
-
 
 
 ##Filtering and formatting data
 ```{r}
 
 # Remove excess tasks (for duration estimation and likert response columns)
-first_trial <- Nback %>%   #15515 tasks
+first_trial <- Nback %>%   #15277 tasks
   filter(Zone.Type == "response_text_entry") %>%
   group_by(PID) %>%
   group_by(nback, .add =T) %>%
@@ -385,21 +336,21 @@ first_trial <- Nback %>%   #15515 tasks
   select(block_nb)
 
 
-trials_to_rm <- setdiff(blocknb$block_nb, first_trial$block_nb)  #525 trials
+trials_to_rm <- setdiff(blocknb$block_nb, first_trial$block_nb)  #543 trials
 
 Nback <- Nback %>%
-        filter(!(block_nb %in% trials_to_rm))  # --> 1,284,896 observations
+        filter(!(block_nb %in% trials_to_rm))  # --> 1,279,958 observations
 
 
 
 #merge entry response (likert scale and duration estimation) with other responses
 df1 <- Nback %>% 
   filter(Zone.Type == "response_keyboard") %>%
-  select(-timestamp,-Zone.Type) 
+  select(-Zone.Type) 
 
 df2 <-Nback %>% 
   filter(Zone.Type == "response_text_entry" | Zone.Type == "response_rating_scale_likert") %>% 
-  select(-timestamp, - Reaction.Time, - Attempt, -retro.pro, , - ntarget, -notarget) %>% 
+  select(-timestamp, - Reaction.Time, - Attempt, - ntarget, -notarget) %>% 
   mutate(Response = as.character(Response)) %>% 
   pivot_wider(values_from = Response, names_from = Zone.Type) 
 
@@ -426,7 +377,7 @@ blocks <- Nback %>%
 blocks
 
 blockswithnoresps <- setdiff(first_trial$block_nb, blocks$block_nb)
-# 1114 participants + 15510 blocks   (blocks with no responses (~0))
+# 1101 participants + 15272 blocks   (blocks with no responses (~0))
 #participants who did not make an estimate have been removed
 
 
@@ -434,15 +385,9 @@ blockswithnoresps <- setdiff(first_trial$block_nb, blocks$block_nb)
 
 
 
-
-
-
 ##translating subjective duration estimates and add them to Nback
 ```{r}
 ##formatting and translating subjective duration estimate
-
-
-
 
 #getting rid of spaces, punctuation, "::" and words that beginning by m, d or λ (for minutes, dakika and λεπτό))     
 subj_duration = Nback %>% filter(Zone.Type == "response_text_entry") %>% 
@@ -505,11 +450,8 @@ no_translated = subj_duration  %>%
 
 #merge subj_duration with Nback ==> add translated estimates
 Nback_all <- left_join(Nback_all, subj_duration, by = c("PID", "Run", "nback", "randomblock")) %>%
-  filter(!is.na(translated))   
-
-
-
-paged_table(Nback_all)  #321,000
+  filter(!is.na(translated))  
+Nback_all #563,000
 
 #Count overall number of trials (8 trials per Run per Participants ) #3850 --> 3785 (75 responses not translated)
 
@@ -522,8 +464,7 @@ Nback_blocks <- Nback_all %>%
             block_nb = first(block_nb)) %>%
   ungroup()
 
-paged_table(Nback_blocks)
-#15208
+Nback_blocks #14976
 
  
 ```
@@ -531,7 +472,7 @@ paged_table(Nback_blocks)
 
 
 
-#Age distribution
+
 
 # Demographics
 ```{r}
@@ -549,14 +490,13 @@ demo <- gimmedata(DataDir = file.path(params$rootdir,'data'),UniqueName = 'Demog
                           country = ifelse(country =="16095", "Italy", country),
                           country = ifelse(`Task Name` == "01_Demographics_IN", "India", country),
                           country = ifelse(country == "16257", "Canada", country),
-                          country = ifelse(country =="16271" | country == "16272", "Colombia", country),
                           country = ifelse(country == "15096" | country == "16303", "France", country),
      country = ifelse(country == "17423" |country == "19856" | country == "19880" | country == "19904"| country == "20044", "Argentina", country)) 
 
-IDnback <- Nback %>%
+IDnback <- Nback_all %>%
   group_by(country, PID) %>%
   summarise()
-IDnback   #1139 PID
+IDnback   #1135 PID
 
 
 DemoNbackS1 <- demo %>%
@@ -587,12 +527,14 @@ DemoNbackS1 <- DemoNbackS1 %>%
 
 DemoNbackS1 <- left_join(DemoNbackS1, dob, by = c("PID", "sex", "handedness")) %>%
     mutate(age = ifelse(is.na(age.x), age.y, age.x)) %>%
-    select(-age.y, -age.x)
+    select(-age.y, -age.x) %>%
+  mutate(country = as.factor(country),
+         country = fct_relevel(country, "France", "Italy", "Turkey", "Greece", "Argentina", "Japan", "India", "Canada")) 
 
 
 #sex ratio
 DemoNbackS1 %>%
-  group_by(country, sex) %>%
+  group_by(sex) %>%
   summarise(n = n()) 
 
 #handedness ratio
@@ -603,25 +545,27 @@ DemoNbackS1 %>%
 #Age (year + month)
 DemoNbackS1 %>%
   filter(!is.na(age)) %>%
-  group_by(country) %>%
-  summarise(mean = mean(age), sd = sd(age))
+  summarise(mean = mean(age), sd = sd(age)) 
+
 
 #Graph density ridge, age distribution for each country
 # jpeg("DistribAgeS1.jpg", width = 4000, height = 2500, units = "px",res=600)
 DemoNbackS1 %>%
    filter(age > 18) %>%
     filter(country != "Columbia") %>%
-  
+  mutate(country = as.factor(country)) %>%
   ggplot( aes(y= country, x= age,  fill= country)) +
-    geom_density_ridges(alpha=0.6, bins=50) +
+    geom_density_ridges(alpha=0.6) +
     theme_ridges() +
     theme(legend.position="none",
       panel.spacing = unit(0.1, "lines"),
-      strip.text.x = element_text(size = 8)) +
-  labs(y = "country", x = "Age", title ="Age distribution of S1 participants") +
-  scale_y_discrete(labels = c("Turkey (146)", "Japan(104)", "Italy (150)", "India (40)", "Greece (125)", "France (362)", "Colombia (4)",  "Canada (33)", "Argentina(124)")) +
-  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
-  scale_x_continuous(breaks = seq(from = 20, to = 80, by = 5))
+      strip.text.x = element_text(size = 8),
+      axis.title.y = element_text("vjust" = 0.5),
+      axis.title.x = element_text("hjust" = 0.5)) +
+  labs(y = "Country", x = "Age", title ="Age distribution of participants for each country") +
+  scale_y_discrete(labels = c("France (348)", "Italy (147)", "Turkey (145)","Greece (125)", "Argentina (117)", "Japan (103)",  "India (42)",  "Canada (33)")) +
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.3)) +
+  scale_x_continuous(breaks = seq(from = 20, to = 75, by = 5))
 # dev.off()
 
   nb_subjects <- DemoNbackS1 %>%
@@ -632,13 +576,23 @@ DemoNbackS1 %>%
 nb_subjects
   
 
-Nback_all <- left_join(Nback_all, DemoNbackS1, by = c("PID", "country")) %>%
-filter(country != "Columbia")
+Nback_all <- left_join(Nback_all, DemoNbackS1, by = c("PID", "country"))
 
 
-Nback_all <- Nback_all %>% select(PID, nback, Run, block_nb, ILI, duration, condition, likert, translated, Reaction.Time, response_arrow, ntarget, notarget, Correct, retro.pro, country, age, sex, handedness) %>%
-write_csv(file.path("/home/user/Desktop/Documents/TimeSocialDistancing/nback_TSD",'S1global_nback.csv'))
+# Nback_all <- Nback_all %>% select(PID, Run, block_nb, nback, ILI, duration, condition, likert, translated, Reaction.Time, response_arrow, ntarget, notarget, Correct, country, age, sex, handedness, timestamp) %>%
+# write_csv(file.path("/home/user/Desktop/Documents/TimeSocialDistancing/nback_TSD",'S1global_nback.csv'))
 
+
+Nback_all %>%
+  filter(is.na(age)) %>%
+  group_by(country) %>%
+  count(PID)
+#39 participants with no handedness, sex and age (46) data
+#warning 6 turkish people with wrong dob 12.04.96 rather than 12.04.1996
+
+
+Nback_all %>%
+  count(PID) #1099
 ```
 
 
