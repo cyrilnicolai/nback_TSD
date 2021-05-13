@@ -3,34 +3,37 @@ title: "S1 Global N-back Retrospective analysis"
 output: html_document
 ---
 
-#packages
+#DEF
+
+##packages
 ```{r, include= F}
 library(tidyverse)
 library(rmarkdown)
 library(ggpubr)
 library(viridis)
 library(cowplot)
-library(RColorBrewer)
-library(R.utils)
 
 library(lme4)
 library(lmtest)
 library(performance)
 library(emmeans)
 
+library(R.utils)
+library(RColorBrewer)
+
 library(factoextra)
 library(moments)
 library(ordinal)
+library(sure)
 ```
 
-#functions
+##Functions
 ```{r, include= F}
 ## Standard Error of the Mean (SEM)
- #Don't forget 10 ms bruit gorilla
 sem <- function(x, na.rm=FALSE) {
      if(na.rm==TRUE) x <- na.omit(x)
      sd(x)/sqrt(length(x)) 
-}
+}  #Don't forget 10 ms bruit gorilla  
 
 ##coefficent of variation
 cv <- function(x){sd(x)/mean(x)}
@@ -49,7 +52,7 @@ Y}
 
 ```
 
-#palettes
+##Palettes
 ```{r, include= F}
 #Palettes of colours
 cbPalette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442",
@@ -64,11 +67,13 @@ cbPalette4 <- c( "#56B4E9", "#009E73", "#E69F00", "#D55E00", "#CC79A7")
 cbPalette5 <- c( "#CC79A7", "#009E73")
 ```
 
-#Formatting duration estimations 
+#FORMATTING DATA AND OUTLIERS REMOVAL
+
+##Formatting dataset
 ```{r}
 
 #Extract processed data for session 1
-file <- "/home/user/Desktop/Documents/TimeSocialDistancing/nback_TSD/S1global_nback.csv"
+file <- "/home/cyril/Documents/Cognition & Brain Dynamics/TimeSocialDistancing/nback_TSD/S1global_nback.csv"
 
 Nback = read.csv2(file, sep = ",")
 
@@ -78,7 +83,9 @@ Nback = read.csv2(file, sep = ",")
 Nback_all <- Nback %>%           #564579 observations
    filter(!is.na(translated)) %>%
          mutate(PID = as.factor(PID),
-         timing_error = as.numeric(as.character(translated)) - parse_number(as.character(duration)),
+         estimate = as.numeric(as.character(translated)),
+         relative_timing = estimate / parse_number(as.character(duration)),
+         timing_error = estimate - parse_number(as.character(duration)),
          age = as.numeric(as.character(age)))
         
 
@@ -92,8 +99,9 @@ Nback_blocks <- Nback_all %>%    #3785 trials
   group_by(ILI, duration, block_nb, .add = T) %>%
   summarise(condition = first(condition),
             likert = first(likert),
-            translated = first(translated),
+            estimate = first(estimate),
             timing_error = first(timing_error),
+            relative_timing = first(relative_timing),
             ntarget = first(ntarget),
             notarget = first(notarget),
             mRT = mean(as.numeric(as.character(Reaction.Time))),
@@ -115,7 +123,7 @@ Nback_blocks <- Nback_all %>%    #3785 trials
 
 
  
-
+#translate PoTJ Likert Scale from different countries in English
 veryquickly = c("muy rápido", "Très rapidement","Πολύ Γρήγορα","Very Fast","Molto veloce","Çok hızlı","とても速かった")
 quickly = c("rápido", "Rapidement","Γρήγορα","Fast","Veloce","Hızlı","速かった")
 normally = c("Normalement", "Κανονικά", "Neutral", "Neutrale", "普通", "Nötr", "normal")
@@ -159,7 +167,7 @@ paged_table(Nback_blocks) #14893
 
 
 
-#first prospective tasks
+##Identify retrospective and first prospective tasks
 ```{r}
 Nback_blocks <- Nback_blocks %>%
   group_by(PID) %>%
@@ -188,31 +196,28 @@ Nback_blocks %>%
   group_by(country, nback) %>%
   summarise(n = n())
 
-#What is the first design condition encountered by the subject ?
+#What is the first design condition encountered by the subject ? --> equally distributed
 Nback_blocks %>%
   group_by(condition) %>%
   count()
 ```
 
 
-#Retro VS 1stPro
+##Retro VS 1stPro
 ```{r}
-
-# jpeg("DistribTES1.jpg", width = 4000, height = 2500, units = "px",res=600)
+#Timing Error distrib - retrospective trials
 ggretro <- retro %>%
   ggplot(aes(timing_error)) + 
   facet_grid(.~duration) +
            geom_histogram(aes(y = ..count..), position = "dodge", binwidth=1,
                    colour = "black" , fill="white") + 
-      # geom_density(aes(y = ..density..*(8000 * 1)), alpha=.4, fill="lightgreen") +
   labs(y = "count", x = "Timing Error (s)", title ="Timing Error distrib for 45s/90s retro tasks (before outliers removal)") + 
   theme_light() +
   theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
   scale_x_continuous(breaks = seq(from = -90, to = 270, by = 30),
   limits = c(-90, 270))
-# dev.off()
 
-
+#Timing Error distrib - prospective trials
 ggpro <- pro1 %>%
   ggplot(aes(timing_error)) + 
   facet_grid(.~duration) +
@@ -226,51 +231,36 @@ ggpro <- pro1 %>%
   limits = c(-90, 270))
 
 
-
-
 plot_row = plot_grid(ggpro, ggretro, nrow=2, labels=c('A', 'B', 'C'))
     
-# jpeg("PerfNbackDurationretroS1.jpg", width = 4000, height = 2500, units = "px",res=600)
-  plot_grid( plot_row,
-  ncol = 1,
-  rel_heights = c(1, 1))
-    # rel_heights values control vertical title margins
+# jpeg("DistribRetroPro.jpg", width = 4000, height = 2500, units = "px",res=600)
+  plot_grid( plot_row, ncol = 1, rel_heights = c(1, 1))
 # dev.off()
   
   
-  
-  
-  SD_Var_retro <- retro %>% 
+SD_Var_retro <- retro %>% 
   group_by(nback) %>%
   group_by(duration, .add =T) %>%
-  summarise(VarSD = var(as.numeric(as.character(translated))), 
-            semSD = sd(as.numeric(as.character(translated))/sqrt(n())))
+  summarise(VarSD = var(estimate), 
+            semSD = sd(estimate)/sqrt(n()))
 
 SDvar_retro <- ggplot(data = SD_Var_retro,
-             aes(x = nback,
-                 y = VarSD,
-                 group = duration,
+             aes(x = nback, y = VarSD, group = duration,
                  fill = interaction(duration, nback))) +
   labs(x = "WM load", y = "Subjective duration variance (s²)", title = "retrospective tasks") +
   theme_classic() +
-  theme(legend.title = element_text(size = 12),
-        legend.text = element_text(size = 11),
-        axis.title = element_text(size = 13),
-        axis.text = element_text(size = 12),
+  theme(legend.title = element_text(size = 12), legend.text = element_text(size = 11),
+        axis.title = element_text(size = 13), axis.text = element_text(size = 12),
         plot.title = element_text("hjust" = 0.5, size = 11)) +
-  scale_fill_manual(values = cbPalette4, name = "Duration",
-  labels = c("45s", "90s", "45s", "90s")) +
-  geom_bar(stat = "identity", width = .7, position = "dodge", alpha = 0.5) +
-  geom_errorbar(aes(ymin =VarSD - semSD, ymax = VarSD + semSD),
-  width = 0.1,
-  show.legend = FALSE)
+  scale_fill_manual(values = cbPalette4, name = "Duration", labels = c("45s", "90s", "45s", "90s")) +
+  geom_bar(stat = "identity", width = .7, position = "dodge", alpha = 0.5)
  
 
 SD_Var_pro1 <- pro1 %>% 
   group_by(nback) %>%
   group_by(duration, .add =T) %>%
-  summarise(VarSD = var(as.numeric(as.character(translated))), 
-            semSD = sd(as.numeric(as.character(translated))/sqrt(n())))
+  summarise(VarSD = var(estimate), 
+            semSD = sd(estimate)/sqrt(n()))
 
 SDvar_pro1 <- ggplot(data = SD_Var_pro1,
              aes(x = nback,
@@ -279,102 +269,84 @@ SDvar_pro1 <- ggplot(data = SD_Var_pro1,
                  fill = interaction(duration, nback))) +
   labs(x = "WM load", y = "Subjective duration variance (s²)", title = "1st prospective tasks") +
   theme_classic() +
-  theme(legend.title = element_text(size = 12),
-        legend.text = element_text(size = 11),
-        axis.title = element_text(size = 13),
-        axis.text = element_text(size = 12),
+  theme(legend.title = element_text(size = 12), legend.text = element_text(size = 11),
+        axis.title = element_text(size = 13), axis.text = element_text(size = 12),
         plot.title = element_text("hjust" = 0.5, size = 11)) +
-  scale_fill_manual(values = cbPalette4, name = "Duration",
-  labels = c("45s", "90s", "45s", "90s")) +
-  geom_bar(stat = "identity", width = .7, position = "dodge", alpha = 0.5) +
-  geom_errorbar(aes(ymin =VarSD - semSD, ymax = VarSD + semSD),
-  width = 0.1,
-  show.legend = FALSE)
+  scale_fill_manual(values = cbPalette4, name = "Duration", labels = c("45s", "90s", "45s", "90s")) +
+  geom_bar(stat = "identity", width = .7, position = "dodge", alpha = 0.5) 
 
 title <- ggdraw() + draw_label(
     "Subjective duration variance for the two first trials of each participant",
-    fontface = 'bold', size = 13,
-  ) +
+    fontface = 'bold', size = 13,) +
   theme(plot.margin = margin(0, 5, 10 ,0))
-
 
 plot_row <- plot_grid(SDvar_retro, SDvar_pro1, nrow=1)
           
-# jpeg("CV_Nback_duration_S1.jpg", width = 4000, height = 2500, units = "px",res=600)
-  plot_grid(
-  title, plot_row,
-  ncol = 1,
-  rel_heights = c(0.1, 1))
+# jpeg("VarRetroPro.jpg", width = 4000, height = 2500, units = "px",res=600)
+  plot_grid(title, plot_row, ncol = 1, rel_heights = c(0.1, 1))
 # dev.off()
-  
 ```
 
 
 
 
 
+##Signal detection theory - HR, CR, FA and d' distribution (before outliers removal)
 ```{r}
 
 #HR DISTRIBUTION
 
-
-# jpeg("DistributionHRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+# jpeg("DistributionHRretro1.jpg", width = 4000, height = 2500, units = "px",res=600)
 Nback_blocks %>%
   ggplot(aes(HR)) + 
   facet_grid(.~nback) +
-           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
-                   colour = "black" , fill="white") + 
-      # geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.4, fill="lightgreen") +
+  geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02, colour = "black" , fill="white") + 
+  theme_light() +
   labs(y = "count", x = "HR", title ="Hit Rate (HR) distribution for 1-back and 3-back") + 
   theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
-  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
-                 limits = c(-0.01,1.01))
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1), limits = c(-0.01,1.01))
  # dev.off()
+
 
 #FA DISTRIBUTION
 
-# jpeg("DistributionFAS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+# jpeg("DistributionFAretro1.jpg", width = 4000, height = 2500, units = "px",res=600)
 Nback_blocks %>%
   ggplot(aes(FA)) + 
   facet_grid(.~nback) +
-           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
-                   colour = "black" , fill="white") + 
-      # geom_density(aes(y = ..density..*(500 * 0.02)), alpha=.4, fill="lightgreen") +
+  geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02, colour = "black" , fill="white") + 
+  theme_light() +
   labs(y = "count", x = "FA", title ="False alarm rate (FA) distribution for 1-back and 3-back") + 
   theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
-  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
-                 limits = c(-0.01,1.01))
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1), limits = c(-0.01,1.01))
  # dev.off()
+
 
 #CR DISTRIBUTION
 
-
-# jpeg("DistributionCRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+# jpeg("DistributionCRretro1.jpg", width = 4000, height = 2500, units = "px",res=600)
 Nback_blocks %>%
   ggplot(aes(CR)) + 
   facet_grid(.~nback) +
-           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
-                   colour = "black" , fill="white") +
+  geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02, colour = "black" , fill="white") +
       # geom_density(aes(y = ..density..*(00 * 0.02)), alpha=.2, fill="lightgreen") +
+  theme_light() +
   labs(y = "count", x = "CR", title ="Correct Rejection Rate (CR) distribution for 1-back and 3-back") + 
   theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
-  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
-                 limits = c(-0.01,1.01))
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1), limits = c(-0.01,1.01))
  # dev.off()
 
+#Dprime DISTRIBUTION
 
-
-# jpeg("DistributionD'S1.jpg", width = 4000, height = 2500, units = "px",res=600)
+# jpeg("DistributionD'retro1.jpg", width = 4000, height = 2500, units = "px",res=600)
 Nback_blocks %>%
   ggplot(aes(dprime)) + 
   facet_grid(.~nback) +
-           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
-                   colour = "black" , fill="white") + 
+  geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02, colour = "black" , fill="white") + 
       # geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.2, fill="lightgreen") +
+  theme_light() +
   labs(y = "count", x = "d'", title ="D prime distribution for 1-back and 3-back") + 
   theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
-  # scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
-  #                limits = c(-0.01,1.01))
  # dev.off()
 
 ```
@@ -382,123 +354,90 @@ Nback_blocks %>%
 
 
 
-#Outliers on d'
+##Performance Outliers - no discrimination (d' = 0) or inverse discrimination (d' <0)
 ```{r}
 
 #Outliers on d'
 
 perf_outliers <- Nback_blocks %>%
-filter(dprime <= 0)
-#250 outliers (65 1-back)
-#--> 847 obs
+filter(dprime <= 0) #250 outliers (65 1-back)
+
 Nback_blocks <- Nback_blocks %>%
-filter(dprime > 0)
+filter(dprime > 0)     #1097 --> 847 obs
 
 
 #HR DISTRIBUTION
 
-
-# jpeg("DistributionHRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+# jpeg("DistributionHRretro2.jpg", width = 4000, height = 2500, units = "px",res=600)
 Nback_blocks %>%
   ggplot(aes(HR)) + 
   facet_grid(.~nback) +
-           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
-                   colour = "black" , fill="white") + 
-      # geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.4, fill="lightgreen") +
+  geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02, colour = "black" , fill="white") + 
+  theme_light() +
   labs(y = "count", x = "HR", title ="Hit Rate (HR) distribution for 1-back and 3-back") + 
   theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
-  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
-                 limits = c(-0.01,1.01))
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1), limits = c(-0.01,1.01))
  # dev.off()
+
 
 #FA DISTRIBUTION
 
-# jpeg("DistributionFAS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+# jpeg("DistributionFAretro2.jpg", width = 4000, height = 2500, units = "px",res=600)
 Nback_blocks %>%
   ggplot(aes(FA)) + 
   facet_grid(.~nback) +
-           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
-                   colour = "black" , fill="white") + 
-      # geom_density(aes(y = ..density..*(500 * 0.02)), alpha=.4, fill="lightgreen") +
+  geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02, colour = "black" , fill="white") + 
+  theme_light() +
   labs(y = "count", x = "FA", title ="False alarm rate (FA) distribution for 1-back and 3-back") + 
   theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
-  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
-                 limits = c(-0.01,1.01))
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1), limits = c(-0.01,1.01))
  # dev.off()
+
 
 #CR DISTRIBUTION
 
-
-# jpeg("DistributionCRS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+# jpeg("DistributionCRretro2.jpg", width = 4000, height = 2500, units = "px",res=600)
 Nback_blocks %>%
   ggplot(aes(CR)) + 
   facet_grid(.~nback) +
-           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
-                   colour = "black" , fill="white") +
+  geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02, colour = "black" , fill="white") +
       # geom_density(aes(y = ..density..*(00 * 0.02)), alpha=.2, fill="lightgreen") +
+  theme_light() +
   labs(y = "count", x = "CR", title ="Correct Rejection Rate (CR) distribution for 1-back and 3-back") + 
   theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
-  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
-                 limits = c(-0.01,1.01))
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1), limits = c(-0.01,1.01))
  # dev.off()
 
+#Dprime DISTRIBUTION
 
-
-# jpeg("DistributionD'S1.jpg", width = 4000, height = 2500, units = "px",res=600)
+# jpeg("DistributionD'retro2.jpg", width = 4000, height = 2500, units = "px",res=600)
 Nback_blocks %>%
   ggplot(aes(dprime)) + 
   facet_grid(.~nback) +
-           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
-                   colour = "black" , fill="white") + 
+  geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02, colour = "black" , fill="white") + 
       # geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.2, fill="lightgreen") +
+  theme_light() +
   labs(y = "count", x = "d'", title ="D prime distribution for 1-back and 3-back") + 
-  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
-  theme_light()
-  # scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
-  #                limits = c(-0.01,1.01))
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
  # dev.off()
 
 ```
 
 
-#mRT VS ILI
+
+
+
+##Outliers removal on Timing Error
 ```{r}
-Nback_blocks %>% 
-   ggplot(aes(y = mRT, x = ILI, fill = ILI)) + 
- 
-  geom_violin(varwidth = TRUE, width= 0.5, outlier.size = 0.1) +
-   geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
-  scale_y_continuous(breaks = seq(from = 0, to = 1600, by = 200),
-                     limits = c(0, 1600)) +
-  stat_summary(fun = mean)  +
-
-   theme_classic() +  
-  labs(y = "mRT", x ="PoTJ", title = "Mean Reaction Time (mRT) vs ILI") + 
-  theme(plot.title = element_text(face = "bold", "hjust" = 0.3)) +
-  theme( legend.text = element_text(size = 10),
-          axis.text = element_text(size = 11), 
- axis.title = element_text(size = 12)) +
- stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", 
-                    label.y = 1500, comparison = list(c("1500ms", "1800ms")))
-
-```
-
-
-
-#Outliers removal on Timing Error
-```{r}
-# jpeg("DistribTES1.jpg", width = 4000, height = 2500, units = "px",res=600)
+# jpeg("DistribTEretro1.jpg", width = 4000, height = 2500, units = "px",res=600)
 Nback_blocks %>%
   ggplot(aes(timing_error)) + 
   facet_grid(.~duration) +
            geom_histogram(aes(y = ..count..), position = "dodge", binwidth=1,
                    colour = "black" , fill="white") + 
   theme_light() +
-      # geom_density(aes(y = ..density..*(8000 * 1)), alpha=.4, fill="lightgreen") +
   labs(y = "count", x = "Timing Error (s)", title ="Timing Error distribution for 45s/90s tasks (before outliers removal)") + 
-  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
-  scale_x_continuous(breaks = seq(from = -90, to = 250, by = 30),
-  limits = c(-90, 250))
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
 # dev.off()
 
 
@@ -517,6 +456,22 @@ Nback_blocks <-  Nback_blocks %>%        #847 -> 817 trials
   dplyr::select(-ZTiming) 
 
 
+# jpeg("DistribTEretro2.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(timing_error)) + 
+  facet_grid(.~duration) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=1,
+                   colour = "black" , fill="white") + 
+  theme_light() +
+  labs(y = "count", x = "Timing Error (s)", title ="Timing Error distribution for 45s/90s tasks (after outliers removal)") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = -90, to = 90, by = 15),
+  limits = c(-91, 91))
+# dev.off()
+```
+
+##Demographics
+```{r}
 #sex ratio
 Nback_blocks %>%
   group_by(sex) %>%
@@ -559,19 +514,504 @@ Nback_blocks %>%
   group_by(country) %>%
   summarise(numbersubjects = n())
 nb_subjects
+```
 
-# jpeg("DistribTE2S1.jpg", width = 4000, height = 2500, units = "px",res=600)
+
+# N-BACK PERFORMANCE 2 (D', Bias, mRT)
+
+
+##Linear Multiple Regression models on d', bias and mRT
+```{r}
+data <- Nback_blocks #817 obs
+
+
+## Model for D'
+
+Md1 <-lm(dprime ~ duration, data=data)
+
+Md2 <-lm(dprime ~ duration + ILI, data=data)
+lrtest(Md1, Md2)  #p > 0.05 n.s -> More complex model (Md2) not significantly better than Md1
+
+Md3 <-lm(dprime ~ duration + nback, data=data)
+lrtest(Md1, Md3) #p < 0.05 -> More complex model (Md3) significantly better than Md1
+
+Md4 <- lm(dprime ~ duration * nback, data=data)
+lrtest(Md3, Md4) #p > 0.05 n.s complex model (Md4) is not better
+
+compare_performance(Md1, Md2, Md3, Md4) #Md3 -> best AIC
+
+summary(Md1)
+summary(Md2)
+summary(Md3) #best model --> shows significative effects of duration and nback on d'
+summary(Md4)
+
+
+#Does Md3 meet assumptions ?
+
+check_normality(Md3) #not OK, but graphically OK
+check_heteroscedasticity(Md3) #not OK, but graphically OK
+check_autocorrelation(Md3) #OK
+check_collinearity(Md3) #OK
+plot(Md3)
+
+
+
+
+##Models for Bias (log(Beta))
+
+MB1 <-lm(logbeta ~ duration, data=data)
+
+MB2 <-lm(logbeta ~ duration + ILI, data=data)
+lrtest(MB1, MB2)  #p < 0.05 -> More complex model (MB2) significantly better than MB1
+
+MB3 <-lm(logbeta ~ duration + ILI + nback, data=data)
+lrtest(MB2, MB3)  #p > 0.05 -> complex model (MB3) is not better
+
+MB4 <-lm(logbeta ~ duration * nback + ILI, data=data)
+lrtest(MB2, MB4)  #p < 0.05 -> More complex model (MB4) significantly better than MB2
+
+MB5 <-lm(logbeta ~ duration * nback * ILI, data=data)
+lrtest(MB4, MB5)  #p > 0.05 -> complex model (MB5) is not better
+
+
+compare_performance(MB1, MB2, MB3, MB4, MB5) #MB4 -> best AIC
+
+summary(MB1)
+summary(MB2)
+summary(MB3)
+summary(MB4)  #best model --> shows significative effects of ILI, duration, nback and duration:nback on Bias
+summary(MB5)
+
+#Does MB4 meet assumptions ?
+
+check_heteroscedasticity(MB4) #not OK, but graphically OK:
+plot(MB4)
+
+check_autocorrelation(MB4) #OK
+check_collinearity(MB4)  #OK
+
+check_normality(MB4) #not OK, but graphically OK:
+R1 <- resid(MB4) #residuals
+hist(R1, breaks = 30)
+
+
+
+
+## Models for mRT
+
+MRT1 <- lm(mRT ~ duration, data = data)
+
+MRT2 <- lm(mRT ~ duration + ILI, data = data)
+lrtest(MRT1, MRT2)
+
+MRT3 <- lm(mRT ~ duration + ILI +  nback, data = data)
+lrtest(MRT2, MRT3) #n.s
+
+MRT4 <- lm(mRT ~ duration * ILI, data = data)
+lrtest(MRT2, MRT4) #n.s
+
+MRT5 <- lm(mRT ~ duration * nback + ILI, data = data)
+lrtest(MRT2, MRT5) #n.s
+
+compare_performance(MRT1, MRT2, MRT3, MRT4) #MRT2 -> best AIC
+
+summary(MRT1)
+summary(MRT2) #best model --> shows significative effects of duration and ILI on mean Reaction Time
+summary(MRT3)
+summary(MRT4)
+
+#Does MRT2 meet assumptions ?
+
+check_normality(MRT2) #not OK, but graphically OK:
+check_heteroscedasticity(MRT2) #not OK, but graphically OK:
+plot(MRT2)
+
+check_autocorrelation(MRT2) #OK
+check_collinearity(MRT2) #OK
+
+
+
+
+#compute emmeans
+# emmeans(MB4, pairwise ~ nback | duration)
+# emmeans(MB4, pairwise ~ nback)
+# emmeans(MB4, "nback")
+# summary(MB4)
+# 
+# emmeans(MB4, pairwise ~ nback)
+
+
+
+
+```
+
+
+
+
+##mRT violin plot
+```{r}
+mRTILI <- Nback_blocks %>% 
+   ggplot(aes(y = mRT, x = ILI, colour = ILI)) + 
+  geom_violin(outlier.shape=NA) +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+  scale_y_continuous(breaks = seq(from = 200, to = 1400, by = 200),
+                     limits = c(150, 1500)) +
+  stat_summary(fun = mean)  +
+   theme_classic() +  
+  labs(y = "mRT (ms)", x ="ILI") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.3)) +
+  theme( legend.position="none",
+          axis.text = element_text(size = 11), 
+ axis.title = element_text(size = 12)) +
+  scale_colour_manual(values = cbPalette2_v2) +
+ stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", 
+                    label.y = 1400, comparison = list(c("1500ms", "1800ms")))
+
+
+mRTDuration <- Nback_blocks %>% 
+   ggplot(aes(y = mRT, x = duration, colour = duration)) + 
+  geom_violin(outlier.shape=NA) +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+  stat_summary(fun = mean)  +
+   theme_classic() +  
+  labs(y = "mRT (ms)", x ="Task Duration") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.3)) +
+  theme( legend.position="none",
+          axis.text = element_text(size = 11), axis.title = element_text(size = 12)) +
+  scale_y_continuous(breaks = seq(from = 200, to = 1400, by = 200),
+                     limits = c(150, 1500)) +
+  scale_colour_manual(values = cbPalette2) +
+ stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", 
+                    label.y = 1390, comparison = list(c("45s", "90s")))
+
+
+title <- ggdraw() + draw_label("mRT for different ILI and Task Duration", 
+                               fontface = 'bold', size = 13) + theme(plot.margin = margin(0, 5, 10 ,0))
+
+plot_row <- plot_grid(mRTILI, mRTDuration, nrow=1)
+          
+# jpeg("mRTViolinRetro.jpg", width = 3000, height = 2500, units = "px",res=600)
+  plot_grid(title, plot_row, ncol = 1, rel_heights = c(0.1, 1))
+# dev.off()
+```
+
+##D' violin plot
+```{r}
+
+violindnback <- Nback_blocks %>% 
+  ggplot(aes(nback, dprime, colour = nback)) +
+  geom_violin(outlier.shape=NA) +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+stat_summary(fun = mean)  +
+  theme_classic() +
+  labs(y = "D'", x = "WM Load", title = "WM Load x D'") +
+  theme( legend.position="none",
+        axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+        axis.text = element_text(size = 12),
+  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + 
+  scale_colour_manual(values = cbPalette2) +
+   stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", comparisons = list(c("1back","3back")))
+
+
+violindduration <- Nback_blocks %>% 
+  ggplot(aes(duration, dprime, colour = duration)) +
+  geom_violin() +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+  stat_summary(fun = mean)  +
+  theme_classic() +
+  labs(y = "D'", x = "Task Duration", title = "Duration x D'") +
+  theme( legend.position="none",
+        axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + 
+  scale_colour_manual(values = cbPalette2_v2) +
+ stat_compare_means( method = "wilcox.test", paired = FALSE, label = "p.format", comparisons = list(c("45s","90s")))
+
+
+#Merge the two graphs
+title <- ggdraw() + draw_label("D' distribution vs Task Duration and WM Load",
+    fontface = 'bold', size = 13) + theme(plot.margin = margin(0, 5, 10 ,0))
+
+plot_row = plot_grid(violindnback + theme(plot.margin = margin(0, 30, 0, 0)),
+  violindduration + theme(plot.margin = margin(0, 10, 0, 0)), nrow=1)
+          
+# jpeg("ViolinD'retro.jpg", width = 5000, height = 2500, units = "px",res=600)
+  plot_grid(title, plot_row, ncol = 1, rel_heights = c(0.1, 1))
+# dev.off()
+
+```
+
+##Bias violin plot
+```{r}
+
+violinBiasnback <- Nback_blocks %>% 
+  ggplot(aes(nback, logbeta, colour = nback)) +
+  geom_violin(outlier.shape=NA) +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+  geom_hline(aes(yintercept = 0), colour = 'black', size = 0.3, linetype = "dashed") +
+stat_summary(fun = mean)  +
+  theme_classic() +
+  labs(y = "Bias", x = "WM Load", title = "WM Load x Bias") +
+  theme( legend.position="none",
+        axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+        axis.text = element_text(size = 12),
+  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + 
+  scale_colour_manual(values = cbPalette4) +
+   stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", comparisons = list(c("1back","3back")))
+
+
+violinBiasduration <- Nback_blocks %>% 
+  ggplot(aes(duration, logbeta, colour = duration)) +
+  geom_violin() +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+   geom_hline(aes(yintercept = 0), colour = 'black', size = .3, linetype = "dashed") +
+  stat_summary(fun = mean)  +
+  theme_classic() +
+  labs(y = "Bias", x = "Task Duration", title = "Duration x Bias") +
+  theme( legend.position="none",
+        axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + 
+  scale_colour_manual(values = cbPalette2_v2) +
+ stat_compare_means( method = "wilcox.test", paired = FALSE, label = "p.format", comparisons = list(c("45s","90s")))
+
+
+violinBiasILI <- Nback_blocks %>% 
+  ggplot(aes(ILI, logbeta, colour = ILI)) +
+  geom_violin(outlier.shape=NA) +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+   geom_hline(aes(yintercept = 0), colour = 'black', size = .3, linetype = "dashed") +
+stat_summary(fun = mean)  +
+  theme_classic() +
+  labs(y = "Bias", x = "ILI", title = "ILI x Bias") +
+  theme( legend.position="none",
+        axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+        axis.text = element_text(size = 12),
+  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + 
+  scale_colour_manual(values = cbPalette2) +
+   stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", comparisons = list(c("1500ms","1800ms")))
+
+
+#Merge the two graphs
+title <- ggdraw() + draw_label("Bias distribution vs Task Duration, ILI and WM Load", 
+                               fontface = 'bold', size = 13) + theme(plot.margin = margin(0, 5, 10 ,0))
+
+plot_row = plot_grid(violinBiasnback, violinBiasduration, violinBiasILI, nrow=1)
+          
+# jpeg("ViolinBiasretro.jpg", width = 5000, height = 2500, units = "px",res=600)
+  plot_grid(title, plot_row, ncol = 1, rel_heights = c(0.1, 1))
+# dev.off()
+  
+  
+  
+#INTERATIONS
+  violinBiasdurationnback <- Nback_blocks %>% 
+    mutate(nbackduration = paste(nback, duration),
+           nbackduration =  fct_relevel(nbackduration, "1back 45s", "3back 45s", "1back 90s", "3back 90s")) %>%
+  ggplot(aes(nbackduration, logbeta, colour = nbackduration)) +
+  geom_violin(outlier.shape=NA) +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+  geom_hline(aes(yintercept = 0), colour = 'black', size = 0.3, linetype = "dashed") +
+stat_summary(fun = mean)  +
+  theme_classic() +
+  labs(y = "Bias", x = "WM Load : Task Duration", title = "Bias for different WM Load and Task Duration") +
+  theme( legend.position="none",
+        axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+        axis.text = element_text(size = 12),
+  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + 
+  scale_colour_manual(values = cbPalette4) 
+   stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", comparisons = list(c("1back45s","3back45S"), c("1back90s","3back90S")))
+
+# jpeg("violinBiasretrointeraction.jpg", width = 3000, height = 2500, units = "px",res=600)
+  violinBiasdurationnback
+# dev.off()
+```
+
+
+
+#DURATION JUDGMENTS - RELATIVE TIMING MODELS
+
+## Linear models Effects of duration, D' and bias on Relative Timing (Why not using the relative timing ?)
+```{r}
+data <- Nback_blocks 
+
+
+M1 <-lm(relative_timing ~ dprime, data=data)
+
+M2 <-lm(relative_timing ~ logbeta + dprime, data=data)
+lrtest(M1, M2)  #n.s p > 0.05  M1 better than M2
+
+M3 <-lm(relative_timing ~ dprime + ILI, data=data)
+lrtest(M1, M3) #n.s p > 0.05  M1 better than M3
+
+M4 <-lm(relative_timing ~ dprime + nback, data=data)
+lrtest(M1, M4) #n.s p > 0.05  M1 better than M4
+
+M5 <-lm(relative_timing ~ dprime + duration, data=data)
+lrtest(M1, M5) #n.s p > 0.05  M1 better than M5
+
+M6 <-lm(relative_timing ~ dprime + duration + logbeta, data=data)
+lrtest(M1, M6) #n.s p > 0.05  M1 better than M6
+
+M7 <-lm(relative_timing ~ logbeta + duration * dprime, data=data)
+lrtest(M1, M7) #n.s p > 0.05  M1 better than M7
+
+M8 <-lm(relative_timing ~ logbeta * duration + dprime, data=data)
+lrtest(M1, M8) #n.s p = 0.14
+
+M9 <-lm(relative_timing ~ logbeta * duration * dprime, data=data)
+lrtest(M1, M9)  #n.s p = 0.11
+
+
+compare_performance(M1, M2, M3, M4, M5, M6, M7, M8, M9) # ~equivalent AIC for every model, but better R2 for M8 and M9
+
+
+summary(M1)
+summary(M2)
+summary(M3)
+summary(M4)
+summary(M5)
+summary(M6)
+summary(M7)
+summary(M8)
+summary(M9)
+
+#we verify model assumptions for M8 and M9
+
+summary(M9)
+check_heteroscedasticity(M9) #not ok 
+check_autocorrelation(M9) #OK
+check_collinearity(M9) #NOT OK --> High correlation !!
+
+
+summary(M8)
+check_heteroscedasticity(M8) #not ok with check, but ok graphically with plot()
+check_autocorrelation(M8) #OK
+check_collinearity(M8) #OK (only low correlation) residuals are independent and not auto-correlated
+
+#we choose M8 model
+
+summary(M8)
+anova(M8)
+
+
+# Verification of model assumptions ####
+
+plot(M8)
+
+R1 <- resid(M8) #residuals
+F1 <- fitted(M8) #fitted values
+
+
+## residuals distribution : histogramme and shapiro test for normality
+hist(R1, breaks = 30)
+check_normality(M8) #non-normality --> to resolve
+
+
+## independance : residuals vs each model covariable
+
+# duration
+boxplot(R1 ~ duration,   
+        ylab = "Normalized residuals",
+        data = data, xlab = "task duration")
+abline(h = 0, lty = 2)
+
+#D' 
+predictions <- summary(emmeans(M8, ~ duration * logbeta + dprime, at = list(dprime = seq(0,5, by = 0.1))))
+
+# jpeg("model", width = 4000, height = 2500, units = "px",res=600)
+ggplot(data, aes(dprime, relative_timing)) +
+geom_point(size = 0.7) +
+  theme_classic() +
+geom_point(predictions, mapping = aes(y= emmean, colour = duration)) +
+  labs(y = "Timing Error (s)", x = "d'")
+# dev.off()
+
+
+#Bias
+predictions <- summary(emmeans(M8, ~ duration * logbeta + dprime, at = list(logbeta = seq(-3,3, by = 0.1))))
+
+# jpeg("model", width = 4000, height = 2500, units = "px",res=600)
+ggplot(data, aes(y = relative_timing, x =logbeta)) +
+geom_point(size = 0.7) +
+  theme_classic() +
+geom_point(predictions, mapping = aes(y= emmean, colour = duration)) +
+  labs(y = "Relative timing", x = "log(β)")
+# dev.off()
+
+
+#determine emmeans
+emmeans(M8, "dprime", at = list(dprime = c(1, 2, 3, 4)))
+emmeans(M8, ~ duration | logbeta, at = list(logbeta = c(-1, 0, 1)))
+```
+
+
+##D' effect on Relative Timing - Visualization
+```{r}
+# jpeg("d'pointretro.jpg", width = 2500, height = 2500, units = "px",res=600)
 Nback_blocks %>%
-  ggplot(aes(timing_error)) + 
-  facet_grid(.~duration) +
-           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=1,
+  ggplot(aes(dprime, relative_timing)) +
+  geom_point(size = 0.5) +
+  geom_smooth(method=lm, fill="#69b3a2", se= T) +
+  geom_hline(aes(yintercept = 1), colour = 'black', size = .3, linetype = "dashed") +
+  theme_classic() +
+   labs(y = "Relative Timing (s)", x = "d'", title = "Relative Timing vs D'") +
+  theme(axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) 
+# dev.off()
+```
+
+
+##Bias effect on Relative Timing - Visualization
+```{r}
+#Log(beta) distribution
+
+
+# jpeg("logbetadistribretro1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(logbeta)) + 
+  facet_grid(.~nback) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
                    colour = "black" , fill="white") + 
-  theme_light() +
-      # geom_density(aes(y = ..density..*(5000 * 1)), alpha=.4, fill="lightgreen") +
-  labs(y = "count", x = "Timing Error (s)", title ="Timing Error distribution for 45s/90s tasks (after outliers removal)") + 
-  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
-  scale_x_continuous(breaks = seq(from = -90, to = 91, by = 15),
-  limits = c(-90, 91))
+  labs(y = "count", x = "log(β)", title ="log(β) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
+ # dev.off()
+
+# jpeg("logbetadistribretro2.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(logbeta)) + 
+  facet_grid(nback~duration) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
+                   colour = "black" , fill="white") + 
+  labs(y = "count", x = "log(β)", title ="log(β) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
+ # dev.off()
+
+
+#Bias effect on Relative Timing
+
+# jpeg("Biaspointretro.jpg", width = 2800, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(logbeta, relative_timing, colour = duration)) +
+  geom_point(size = 0.5) +
+  geom_smooth(method=lm, fill="#69b3a2", se= T) +
+    geom_hline(aes(yintercept = 1), colour = 'black', size = .3, linetype = "dashed") +
+  theme_classic() +
+   labs(y = "Relative Timing (s)", x = "Bias", title = "Relative Timing vs Bias") +
+  theme(axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+          axis.text = element_text(size = 12),
+        legend.position = c(.1, .8),
+  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + 
+  scale_colour_manual(values = cbPalette2) 
 # dev.off()
 ```
 
@@ -579,17 +1019,578 @@ Nback_blocks %>%
 
 
 
-## N-BACK PERFORMANCE (Correct Response Rate, False Alarm Rate, mRT)
 
 
-#N-back Performance table and N-Back Performance Graphs for different WM load and Task duration
+
+
+#PASSAGE OF TIME JUDGMENT (PoTJ)
+
+
+##PoTJ tables - % respondant for each likert answer
+```{r}
+Likert_nback <- Nback_blocks %>%
+   filter(!is.na(likert)) %>%
+  mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly")) %>%
+	group_by(nback, likert) %>%  # grouping by these two variables
+	tally() %>%  # counting the number of responses
+	mutate(perc = n / sum(n) * 100) %>%
+	dplyr::select(-n) %>%
+	group_by(nback) %>%
+	spread(likert, perc) %>% 
+  rename(design = nback)
+   
+Likert_ILI <- Nback_blocks %>%
+   filter(!is.na(likert)) %>%
+  mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly")) %>%
+	group_by(ILI, likert) %>%  # grouping by these two variables
+	tally() %>%  # counting the number of responses
+	mutate(perc = n / sum(n) * 100) %>%
+	dplyr::select(-n) %>%
+	group_by(ILI) %>%
+	spread(likert, perc) %>% 
+  rename(design = ILI) %>% 
+  mutate(design = fct_recode(design, "1500ms" = "1500", "1800ms" = "1800"))
+
+Likert_duration <- Nback_blocks %>%
+   filter(!is.na(likert)) %>%
+  mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly")) %>%
+	group_by(duration, likert) %>%  # grouping by these two variables
+	tally() %>%  # counting the number of responses
+	mutate(perc = n / sum(n) * 100) %>%
+	dplyr::select(-n) %>%
+	group_by(duration) %>%
+	spread(likert, perc) %>% 
+  rename(design = duration) %>%
+  mutate(design = fct_recode(design, "45s" = "45", "90s" = "90"))
+   
+
+Likert_all <- bind_rows(Likert_ILI, Likert_nback, Likert_duration)
+  
+paged_table(Likert_all)  
+```
+
+
+
+
+
+##PoTJ VS ILI, WM Load & Duration (design paramaters) - All together
+```{r}
+#PoTJ vs ALL
+likert_hi_lo <- Likert_all %>%
+	mutate(midlow = Normally / 2,
+		midhigh = Normally / 2) %>%
+	dplyr::select(design, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
+	gather(key = response, value = perc, 2:7) 
+	colnames <- (c("duration", "response", "perc"))
+
+
+likert_lo <- likert_hi_lo %>%
+	filter(response %in% c( "midlow", "Slowly", "Very Slowly")) %>%
+	mutate(response = factor(response, levels = c("Very Slowly", "Slowly", "midlow")))
+
+likert_hi <- likert_hi_lo %>%
+	filter(response %in% c( "Very Quickly", "Quickly", "midhigh")) %>%
+	mutate(response = factor(response, levels = c("Very Quickly", "Quickly", "midhigh")))
+
+
+# Use RColorBrewer to store a preset diverging colour palette as a vector of colour codes 
+legend_pal <- brewer.pal(name = "RdBu", n = 5)
+
+# Duplicate the middle value, remember that "Sometimes" is actually two groups, "midhigh" and "midlow"
+legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
+
+# Replace the ugly white colour for "Sometimes" with a pleasant dishwater grey
+legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
+
+names(legend_pal) <- c("Very Quickly", "Quickly","midhigh", "midlow", "Slowly", "Very Slowly" )
+
+# jpeg("divergingBarLikertretro1.jpg", width = 5000, height = 2500, units = "px",res=600)
+ggplot() + 
+	geom_bar(data = likert_hi, aes(x = design, y=perc, fill = response), stat="identity", width = 0.5) +
+	geom_bar(data = likert_lo, aes(x = design, y=-perc, fill = response), stat="identity", width = 0.5) + 
+	geom_hline(yintercept = 0, color =c("black")) + 
+	scale_fill_manual(values = legend_pal, 
+		breaks = c("Very Quickly", "Quickly", "midhigh", "Slowly", "Very Slowly" ),
+		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
+	coord_flip() + 
+	labs(x = "        ILI                  WM Load                  Duration ", y = "Percentage of respondents (%)", title = "Diverging stacked bar of likert scale PoTJ for different durations") +
+  scale_y_continuous(breaks = seq(from = -40, to = 75, 10),
+                     limits = c(-45,80)) +
+	theme_classic()
+# dev.off()
+```
+
+
+
+##Passing of time statistic ordinal regression model
+```{r}
+
+#no effect of d'
+#effect of ILI, duration and nback + interaction Bias / nback
+
+data = Nback_blocks %>%
+  filter(!is.na(likert_n))
+
+library(MASS)
+
+m1 = polr(likert ~ duration, data, Hess=T)
+
+m2 = polr(likert ~ duration + ILI, data, Hess=T)
+lrtest(m1,m2)  # p < 0.05 m2 is better than m1 (likelihood ratio test)
+
+m3 = polr(likert ~ duration + ILI + nback, data, Hess=T)
+lrtest(m2,m3)  # p < 0.05 m3 is better than m2
+
+m4 = polr(likert ~ duration + ILI + nback + dprime, data, Hess=T)
+lrtest(m3,m4)  # n.s m4 is not better than m4
+
+m5 = polr(likert ~ duration + ILI + nback + logbeta, data, Hess=T)
+lrtest(m3,m5)   # n.s m4 is not better than m5
+
+m6 = polr(likert ~ duration * nback * ILI , data, Hess=T)
+lrtest(m3,m6)  # n.s m4 is not better than m6
+
+m7 = polr(likert ~ duration *dprime + nback + ILI , data, Hess=T)
+lrtest(m3,m7) # n.s m4 is not better than m7
+
+m8 = polr(likert ~ duration + dprime * nback + ILI, data, Hess=T)
+lrtest(m3,m8) # n.s m4 is not better than m8
+
+m9 = polr(likert ~ duration + nback + ILI * dprime , data, Hess=T)
+lrtest(m3,m9) # n.s m4 is not better than m9
+
+m10 = polr(likert ~ duration * nback * ILI * dprime , data, Hess=T)
+lrtest(m3,m10) # n.s m4 is not better than m10
+
+m11 = polr(likert ~ duration + nback + ILI * logbeta, data, Hess=T)
+lrtest(m3,m11) # n.s  m4 is not better than m11
+
+m12 = polr(likert ~ duration * logbeta + nback + ILI , data, Hess=T)
+lrtest(m3,m12) # n.s  m4 is not better than m12
+
+m13 = polr(likert ~ duration + logbeta * nback + ILI , data, Hess=T)
+lrtest(m3,m13) # p < 0.05 More complex model (M13) better than M3
+
+m14 = polr(likert ~ duration + logbeta * nback * ILI , data, Hess=T)
+lrtest(m13,m14) # n.s  m14 is not better than m13
+
+m15 = polr(likert ~ duration * logbeta * nback * ILI , data, Hess=T)
+lrtest(m13,m15) # n.s  m15 is not better than m13
+
+
+compare_performance(m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15) #m11, m13, m14 --> best AIC
+
+summary(m1)
+summary(m2)
+summary(m3)
+summary(m13)
+summary(m14)
+#we choose m13
+
+summary(m13)
+coeffs <- coef(summary(m13))
+p <- pnorm(abs(coeffs[, "t value"]), lower.tail = FALSE) * 2
+cbind(coeffs, "p value" = round(p,3)) #get the p-value for each effect
+
+exp(cbind(OR = coef(m13), ci = confint(m13))) #logit effects are difficult to interpret --> exp() to have % change
+```
+
+#Ordinal regression assumptions
+```{r}
+# sres <- resids(m13)
+# autoplot(sres)
+# 
+# ##covariate : heteroscedasticity
+# ggplot2::autoplot(m13, what = "covariate", x = data$duration)
+# autoplot(sres, what = "covariate", x = data$nback)
+# autoplot(sres, what = "covariate", x = data$ILI)
+# autoplot(sres, what = "covariate", x = data$logbeta)
+# 
+# 
+# #QQ plot : normality
+# autoplot(sres, what = "qq", distribution = qnorm)
+# ggplot2::autoplot(m1, output = "covariate", distribution = qnorm, data)
+
+#collinearity
+check_collinearity(m13)
+
+##Proportional odds assumption
+require(Hmisc)
+
+sf <- function(y) {
+  c(
+    'Y>=1' = qlogis(mean(y >= 1)),
+    'Y>= 2' = qlogis(mean(y >= 2)),
+    'Y>= 3' = qlogis(mean(y >= 3)),
+    'Y>= 4' = qlogis(mean(y >= 4)),
+    'Y>=5' = qlogis(mean(y >= 5)))
+}
+
+s <- with(data, summary(as.numeric(likert) ~ duration + ILI + nback + nback:logbeta, fun=sf))
+s
+
+s[, 6] <- s[, 6] - s[, 3]
+s[, 5] <- s[, 5] - s[, 3]
+s[, 4] <- s[, 4] - s[, 3]
+s[, 3] <- s[, 3] - s[, 3]
+s
+
+plot(s, which=1:5, pch=1:5, xlab='logit', main=' ', xlim=range(s[,3:6]))
+
+```
+
+
+
+
+## Bias X PoTJ - violin plot (3-back ! --> interaction Bias x WM Load)
+```{r}
+
+data <- Nback_blocks %>% 
+  filter( !is.na(likert)) %>%
+  filter(nback == "3back") 
+
+my_xlab <- paste(levels(data$likert),"\n(N=",table(data$likert),")", sep="")
+my_comparison = list( c("Very Slowly", "Normally"), c("Normally", "Very Quickly"), c("Very Slowly", "Very Quickly"))
+
+# jpeg("BiasxPoTJviolin.jpg", width = 3000, height = 2500, units = "px",res=600)
+data%>%
+   ggplot(aes(y = logbeta, x = likert, fill = likert)) + 
+  geom_violin(varwidth = TRUE, width= 1, outlier.size = 0.1) +
+  geom_hline(aes(yintercept = 0), colour = 'black', size = .5, linetype = "dashed") +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+  scale_x_discrete(labels = my_xlab) +
+  stat_summary(fun = mean)  +
+  scale_fill_viridis(discrete = TRUE, alpha=0.3, name = "In the last round,\nthe time seemed \nto have passed:",
+		labels = c("Very slowly", "Slowly", "Normally", "Quickly","Very quickly"  )) +
+   theme_classic() +  
+  labs(y = "Bias", x ="PoTJ", title = "Bias vs Passage of Time Judgment for 3-back tasks") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.3)) +
+  theme( legend.text = element_text(size = 10),
+          axis.text = element_text(size = 11), 
+ axis.title = element_text(size = 12)) +
+ stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", 
+                    label.y = c(2.7,2.75,3.1), comparison = my_comparison) + theme(legend.position = "none")
+# dev.off()
+
+
+
+```
+
+
+
+
+
+
+
+
+#Ordinal Regression Model - Does Relative Timing a good predictor of PoTJ
+```{r}
+
+#effect of Relative Timing on PoTJ likert scale
+
+data = Nback_blocks %>%
+  filter(!is.na(likert_n))
+
+library(MASS)
+
+m1 = polr(likert ~ relative_timing, data, Hess=T)
+
+summary(m1)
+
+coeffs <- coef(summary(m1))
+p <- pnorm(abs(coeffs[, "t value"]), lower.tail = FALSE) * 2
+cbind(coeffs, "p value" = round(p,3)) #get the p-value for each effect
+exp(cbind(OR = coef(m1), ci = confint(m1))) #logit effects are difficult to interpret --> exp() to have % change
+
+# newdat <- data.frame(nback =c(,1))
+# (phat <- predict(object = m, newdat, type="p"))
+
+
+
+
+##Proportional odds assumption
+require(Hmisc)
+
+sf <- function(y) {
+  c(
+    'Y>=1' = qlogis(mean(y >= 1)),
+    'Y>= 2' = qlogis(mean(y >= 2)),
+    'Y>= 3' = qlogis(mean(y >= 3)),
+    'Y>= 4' = qlogis(mean(y >= 4)),
+    'Y>=5' = qlogis(mean(y >= 5)))
+}
+
+s <- with(data, summary(as.numeric(likert) ~ relative_timing, fun=sf))
+s
+
+s[, 6] <- s[, 6] - s[, 3]
+s[, 5] <- s[, 5] - s[, 3]
+s[, 4] <- s[, 4] - s[, 3]
+s[, 3] <- s[, 3] - s[, 3]
+s
+
+plot(s, which=1:5, pch=1:5, xlab='logit', main=' ', xlim=range(s[,3:6]))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+##Relative Timing X PoTJ violin plot
+```{r}
+my_xlab <- paste(levels(Nback_blocks$likert),"\n(N=",table(Nback_blocks$likert),")", sep="")
+my_comparison = list( c("Very Slowly", "Normally"), c("Normally", "Very Quickly"), c("Very Slowly", "Very Quickly"))
+
+# jpeg("PoTJDJretro", width = 3000, height = 2500, units = "px",res=600)
+Nback_blocks %>% 
+  filter( !is.na(likert)) %>%
+   ggplot(aes(y = relative_timing, x = likert, fill = likert)) + 
+  geom_violin(varwidth = TRUE, width= 1, outlier.size = 0.1) +
+  geom_hline(aes(yintercept = 1), colour = 'black', size = .5, linetype = "dashed") +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+  scale_x_discrete(labels = my_xlab) +
+  scale_y_continuous(breaks = seq(from = 0, to = 3, by = .5),
+                     limits = c(0, 3)) +
+  stat_summary(fun = mean)  +
+  scale_fill_viridis(discrete = TRUE, alpha=0.3, name = "In the last round,\nthe time seemed \nto have passed:",
+		labels = c("Very slowly", "Slowly", "Normally", "Quickly","Very quickly"  )) +
+   theme_classic() +  
+  labs(y = "Relative Timing", x ="PoTJ", title = "Relative Timing vs Passage of Time Judgment") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.3)) +
+  theme( legend.text = element_text(size = 10),
+          axis.text = element_text(size = 11), 
+ axis.title = element_text(size = 12),
+ legend.position ="None") +
+ stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", 
+                    label.y = c(2.7,2.8,3), comparison = my_comparison)
+# dev.off()
+```
+
+
+#Break Relative timing in tertiles or quantiles
+```{r}
+
+Nback_blocks <- data %>%
+  mutate(quantile = cut(relative_timing, breaks = unique(quantile(relative_timing,
+                                        probs=seq.int(0,1, by=1/5))), include.lowest=TRUE),
+  quantile = ifelse(quantile == "[0,0.444]", "1st     \n [0, 0.444]", as.character(quantile)),
+  quantile = ifelse(quantile == "(0.444,0.667]", "2nd     \n (0.444, 0.667]", as.character(quantile)),
+  quantile = ifelse(quantile == "(0.667,0.778]", "3rd     \n (0.667, 0.778]", as.character(quantile)),
+  quantile = ifelse(quantile == "(0.778,1.33]", "4th     \n (0.778, 1.33]", as.character(quantile)),
+  quantile = ifelse(quantile == "(1.33,2.67]", "5th     \n (1.33, 2.67]", as.character(quantile)),     
+  tertile = cut(relative_timing, breaks = unique(quantile(relative_timing,
+                                        probs=seq.int(0,1, by=1/3))), include.lowest=TRUE),
+  tertile = ifelse(tertile == "[0,0.667]", "1st     \n [0, 0.667]", as.character(tertile)),
+  tertile = ifelse(tertile == "(0.667,1]", "2nd     \n (0.667, 1]", as.character(tertile)),
+  tertile = ifelse(tertile == "(1,2.67]", "3rd     \n (1, 2.67]", as.character(tertile)))
+  
+  summary(Nback_blocks)
+
+Likert_quantile <- Nback_blocks %>%
+   filter(!is.na(likert)) %>%
+  mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly")) %>%
+	group_by(quantile, likert) %>%  # grouping by these two variables
+	tally() %>%  # counting the number of responses
+	mutate(perc = n / sum(n) * 100) %>%
+	dplyr::select(-n) %>%
+	group_by(quantile) %>%
+	spread(likert, perc) 
+
+Likert_quantile
+
+Likert_tertile <- Nback_blocks %>%
+   filter(!is.na(likert)) %>%
+  mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly")) %>%
+	group_by(tertile, likert) %>%  # grouping by these two variables
+	tally() %>%  # counting the number of responses
+	mutate(perc = n / sum(n) * 100) %>%
+	dplyr::select(-n) %>%
+	group_by(tertile) %>%
+	spread(likert, perc) 
+
+Likert_tertile
+```
+
+
+
+##PoTJ X Relative Timing - Diverging stacked bar 
+```{r}
+#PoTJ vs Relative Timing (Quantiles)
+likert_hi_lo <- Likert_quantile %>%
+	mutate(midlow = Normally / 2,
+		midhigh = Normally / 2) %>%
+	dplyr::select(quantile, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
+	gather(key = response, value = perc, 2:7) 
+	colnames <- (c("quantile", "response", "perc"))
+
+
+likert_lo <- likert_hi_lo %>%
+	filter(response %in% c( "midlow", "Slowly", "Very Slowly")) %>%
+	mutate(response = factor(response, levels = c("Very Slowly", "Slowly", "midlow")))
+
+likert_hi <- likert_hi_lo %>%
+	filter(response %in% c( "Very Quickly", "Quickly", "midhigh")) %>%
+	mutate(response = factor(response, levels = c("Very Quickly", "Quickly", "midhigh")))
+
+
+legend_pal <- brewer.pal(name = "RdBu", n = 5)
+
+legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
+
+legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
+
+names(legend_pal) <- c("Very Quickly", "Quickly","midhigh", "midlow", "Slowly", "Very Slowly" )
+
+# jpeg("BarslikertRelativeTiming1.jpg", width = 4000, height = 2500, units = "px",res=600)
+ggplot() + 
+	geom_bar(data = likert_hi, aes(x = quantile, y=perc, fill = response), stat="identity", width = 0.5) +
+	geom_bar(data = likert_lo, aes(x = quantile, y=-perc, fill = response), stat="identity", width = 0.5) + 
+	geom_hline(yintercept = 0, color =c("black")) + 
+	scale_fill_manual(values = legend_pal, 
+		breaks = c("Very Quickly", "Quickly", "midhigh", "Slowly", "Very Slowly" ),
+		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
+  labs(x = "Relative Timing", y ="Percentage of Respondants (%)", title = "Relative Timing vs Passage of Time Judgment") +
+  coord_flip() + 
+  scale_y_continuous(breaks = seq(from = -40, to = 75, 10),
+                     limits = c(-45,80)) +
+	theme_classic()
+# dev.off()
+
+
+
+
+#PoTJ vs Relative Timing (tertiles)
+likert_hi_lo <- Likert_tertile %>%
+	mutate(midlow = Normally / 2,
+		midhigh = Normally / 2) %>%
+	dplyr::select(tertile, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
+	gather(key = response, value = perc, 2:7) 
+	colnames <- (c("tertile", "response", "perc"))
+
+
+likert_lo <- likert_hi_lo %>%
+	filter(response %in% c( "midlow", "Slowly", "Very Slowly")) %>%
+	mutate(response = factor(response, levels = c("Very Slowly", "Slowly", "midlow")))
+
+likert_hi <- likert_hi_lo %>%
+	filter(response %in% c( "Very Quickly", "Quickly", "midhigh")) %>%
+	mutate(response = factor(response, levels = c("Very Quickly", "Quickly", "midhigh")))
+
+
+legend_pal <- brewer.pal(name = "RdBu", n = 5)
+
+legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
+
+legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
+
+names(legend_pal) <- c("Very Quickly", "Quickly","midhigh", "midlow", "Slowly", "Very Slowly" )
+
+# jpeg("BarslikertRelativeTiming2.jpg", width = 4000, height = 2500, units = "px",res=600)
+ggplot() + 
+	geom_bar(data = likert_hi, aes(x = tertile, y=perc, fill = response), stat="identity", width = 0.5) +
+	geom_bar(data = likert_lo, aes(x = tertile, y=-perc, fill = response), stat="identity", width = 0.5) + 
+	geom_hline(yintercept = 0, color =c("black")) + 
+	scale_fill_manual(values = legend_pal, 
+		breaks = c("Very Quickly", "Quickly", "midhigh", "Slowly", "Very Slowly" ),
+		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
+  labs(x = "Relative Timing", y ="Percentage of Respondants (%)", title = "Relative Timing vs Passage of Time Judgment") + 
+	coord_flip() + 
+  scale_y_continuous(breaks = seq(from = -40, to = 75, 10),
+                     limits = c(-45,80)) +
+	theme_classic()
+# dev.off()
+```
+
+
+
+
+##PoTJ vs Relative Timing - Heatmap
+```{r}
+
+#Quantiles
+
+nPoTJ <- Nback_blocks %>%
+  filter(!is.na(likert)) %>%
+  group_by(likert) %>%
+  summarise(nPoTJ = n())
+
+nPoTJxQ <- Nback_blocks %>%
+  group_by(likert, quantile) %>%
+  tally() 
+
+Heatquantile <- left_join(nPoTJxQ, nPoTJ, by = c("likert")) %>%
+  group_by(likert, quantile) %>%
+  summarise(percentage = n/nPoTJ)
+
+# Heatmap 
+# jpeg("HeatmapPoTJxRT1.jpg", width = 4000, height = 2500, units = "px",res=600)
+ggplot(Heatquantile, aes(likert, quantile, fill= percentage)) + 
+  geom_tile()
+# dev.off()
+
+
+
+
+#Tertile
+
+nPoTJ <- Nback_blocks %>%
+  filter(!is.na(likert)) %>%
+  group_by(likert) %>%
+  summarise(nPoTJ = n())
+
+nPoTJxQ <- Nback_blocks %>%
+  group_by(likert, tertile) %>%
+  tally() 
+
+Heatquantile <- left_join(nPoTJxQ, nPoTJ, by = c("likert")) %>%
+  group_by(likert, tertile) %>%
+  summarise(percentage = n/nPoTJ)
+
+# Heatmap 
+# jpeg("HeatmapPoTJxRT2.jpg", width = 4000, height = 2500, units = "px",res=600)
+ggplot(Heatquantile, aes(likert, tertile, fill= percentage)) + 
+  geom_tile()
+# dev.off()
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#SUPPLEMENTARY CHUNKS
+
+
+
+
+
+#N-BACK PERFORMANCE 1 (HR, FA, mRT)
+
+
+##N-back Performance table and N-Back Performance Graphs for different WM load and Task duration
 ```{r}
 perfNback <- Nback_blocks %>%
   filter(!is.na(mRT)) %>%
   group_by(nback, duration) %>%
-  summarise(HR = mean(HR),
-            mRT = mean(mRT),
-            FA = mean(FA))
+  summarise(HR = mean(HR), mRT = mean(mRT), FA = mean(FA))
 
 semHR <- aggregate(HR ~ nback + duration, Nback_blocks, sem) 
 semmRT <- aggregate(mRT ~ nback + duration, Nback_blocks, sem) #apply sem function 
@@ -600,11 +1601,8 @@ perfNback <- bind_cols(perfNback, semHR$HR, semmRT$mRT, semFA$FA) %>%
 
 paged_table(perfNback)
 
-# Correct response rate VS WM load and task duration
-perf_HR = perfNback %>% ggplot (aes(x = nback,
-                                              y = HR,
-                                              group = duration,
-                                              colour = duration)) +
+# Hit Rate VS WM load and task duration
+perf_HR = perfNback %>% ggplot (aes(x = nback, y = HR, group = duration, colour = duration)) +
   geom_point(size = 2) +
   geom_line(aes(group = duration), size = 1) +
   theme_classic() +
@@ -612,18 +1610,13 @@ perf_HR = perfNback %>% ggplot (aes(x = nback,
   theme( legend.text = element_text(size = 11),
           axis.text = element_text(size = 11),
   plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
-  geom_errorbar(aes(ymin = HR - semHR, ymax = HR + semHR),
-                colour = "black",
-                width = .05) +
+  geom_errorbar(aes(ymin = HR - semHR, ymax = HR + semHR), colour = "black", width = .05) +
   scale_colour_manual(values = cbPalette2) +
-  scale_y_continuous(breaks = seq(from = 0.30, to = 0.90, by = 0.10),
-limits = c(0.29, 0.90))
+  scale_y_continuous(breaks = seq(from = 0.30, to = 0.90, by = 0.10), limits = c(0.29, 0.90))
+
 
 # False Alarm rate VS WM load and task duration
-perf_FA = perfNback %>% ggplot (aes(x = nback,
-                                              y = FA,
-                                              group = duration,
-                                              colour = duration)) +
+perf_FA = perfNback %>% ggplot (aes(x = nback, y = FA, group = duration, colour = duration)) +
   geom_point(size = 2) +
   geom_line(aes(group = duration), size = 1) +
   theme_classic() +
@@ -632,33 +1625,26 @@ perf_FA = perfNback %>% ggplot (aes(x = nback,
           axis.text = element_text(size = 11),
   plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13),
     legend.position = c(.7, .15))  +
-  geom_errorbar(aes(ymin =FA - semFA, ymax = FA + semFA),
-                colour = "black",
-                width = .05) +
+  geom_errorbar(aes(ymin =FA - semFA, ymax = FA + semFA), colour = "black", width = .05) +
   scale_colour_manual(values = cbPalette2) +
-  scale_y_continuous(breaks = seq(from = 0, to = 0.25, by = 0.05),
-limits = c(0, 0.25))
+  scale_y_continuous(breaks = seq(from = 0, to = 0.25, by = 0.05), limits = c(0, 0.25))
+
 
 # mean Reaction Time VS WM load and task duration
 perf_mRT = perfNback %>% 
-  ggplot (aes(x = nback, y = mRT,
-              group = duration,
-              colour = duration)) +
+  ggplot (aes(x = nback, y = mRT, group = duration, colour = duration)) +
   geom_point(size = 2) +
   geom_line(aes(group = duration), size = 1) +
   theme_classic() +
   labs(x = "WM load", y = "Mean Reaction Time (ms)") +
-  theme( legend.text = element_text(size = 11),
-         legend.title = element_text(size = 11),
+  theme( legend.text = element_text(size = 11), legend.title = element_text(size = 11),
           axis.text = element_text(size = 12),
   plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13),
    legend.position = c(.8, .2))  +
-  geom_errorbar(aes(ymin =mRT - semmRT, ymax = mRT + semmRT),
-                colour = "black",
-                width = .05)  +
-  scale_y_continuous(breaks = seq(from = 560, to = 640, by = 20),
-limits = c(560, 640)) +
-  scale_colour_manual(values = cbPalette2, labels = c("45s", "90s"))
+  geom_errorbar(aes(ymin =mRT - semmRT, ymax = mRT + semmRT), colour = "black", width = .05)  +
+    scale_colour_manual(values = cbPalette2, labels = c("45s", "90s")) +
+  scale_y_continuous(breaks = seq(from = 560, to = 640, by = 20), limits = c(560, 640)) 
+
 
 
 #merge the 3 graphs and save the final graph
@@ -666,33 +1652,26 @@ perf_HR <- perf_HR + theme(legend.position = "none")
 perf_FA <- perf_FA 
 perf_mRT = perf_mRT + theme(legend.position = "none")
 
-title <- ggdraw() + draw_label(
-    "N-back performance VS working memory load and task duration",
-    fontface = 'bold', size = 13) +
-  theme(plot.margin = margin(0, 5, 10 ,0))
+title <- ggdraw() + draw_label("N-back performance VS working memory load and task duration",
+    fontface = 'bold', size = 13) + theme(plot.margin = margin(0, 5, 10 ,0))
 
 plot_row = plot_grid(perf_HR, perf_FA, perf_mRT, nrow=1, labels=c('A', 'B', 'C'))
     
-# jpeg("PerfNbackDurationretroS1.jpg", width = 4000, height = 2500, units = "px",res=600)
-  plot_grid(
-  title, plot_row,
-  ncol = 1,
-  rel_heights = c(0.1, 1))  # rel_heights values control vertical title margins
+# jpeg("PerfNbackDurationretro.jpg", width = 4000, height = 2500, units = "px",res=600)
+  plot_grid(title, plot_row, ncol = 1, rel_heights = c(0.1, 1))  
 # dev.off()
 ```
 
 
 
 
-#N-back Performance table and N-Back Performance Graphs for different WM load and ILI (Inter-letter interval)
+##N-back Performance table and N-Back Performance Graphs for different WM load and ILI (Inter-letter interval)
 ```{r}
 
 perfNback <- Nback_blocks %>%
   filter(!is.na(mRT)) %>%
   group_by(nback, ILI) %>%
-  summarise(HR = mean(HR),
-            mRT = mean(mRT),
-            FA = mean(FA))
+  summarise(HR = mean(HR), mRT = mean(mRT), FA = mean(FA))
 
 semHR <- aggregate(HR ~ nback + ILI, Nback_blocks, sem) 
 semmRT <- aggregate(mRT ~ nback + ILI, Nback_blocks, sem)  #apply sem function 
@@ -704,10 +1683,7 @@ perfNback <- bind_cols(perfNback, semHR$HR, semmRT$mRT, semFA$FA) %>%
 paged_table(perfNback)
 
 
-perf_HR = perfNback %>% ggplot (aes(x = nback,
-                                              y = HR,
-                                              group = ILI,
-                                              colour = ILI)) +
+perf_HR = perfNback %>% ggplot (aes(x = nback, y = HR, group = ILI, colour = ILI)) +
   geom_point(size = 2) +
   geom_line(aes(group = ILI), size = 1) +
   theme_classic() +
@@ -715,18 +1691,12 @@ perf_HR = perfNback %>% ggplot (aes(x = nback,
   theme( legend.text = element_text(size = 15),
           axis.text = element_text(size = 12),
   plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
-  geom_errorbar(aes(ymin = HR - semHR, ymax = HR + semHR),
-                colour = "black",
-                width = .05) +
+  geom_errorbar(aes(ymin = HR - semHR, ymax = HR + semHR), colour = "black", width = .05) +
   scale_colour_manual(values = cbPalette2_v2) +
-  scale_y_continuous(breaks = seq(from = 0.40, to = 0.90, by = 0.10),
-limits = c(0.35, 0.90))
+  scale_y_continuous(breaks = seq(from = 0.40, to = 0.90, by = 0.10), limits = c(0.35, 0.90))
 
 
-perf_FA = perfNback %>% ggplot (aes(x = nback,
-                                              y = FA,
-                                              group = ILI,
-                                              colour = ILI)) +
+perf_FA = perfNback %>% ggplot (aes(x = nback, y = FA, group = ILI, colour = ILI)) +
   geom_point(size = 2) +
   geom_line(aes(group = ILI), size = 1) +
   theme_classic() +
@@ -735,32 +1705,23 @@ perf_FA = perfNback %>% ggplot (aes(x = nback,
           axis.text = element_text(size = 10),
   plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13),
   legend.position = c(.72, .15)) +
-  geom_errorbar(aes(ymin =FA - semFA, ymax = FA + semFA),
-                colour = "black",
-                width = .05) +
+  geom_errorbar(aes(ymin =FA - semFA, ymax = FA + semFA), colour = "black", width = .05) +
   scale_colour_manual(values = cbPalette2_v2)  +
-  scale_y_continuous(breaks = seq(from = 0.05, to = 0.20, by = 0.05),
-limits = c(0.05, 0.23)) 
+  scale_y_continuous(breaks = seq(from = 0.05, to = 0.20, by = 0.05), limits = c(0.05, 0.23)) 
 
 
 # mean Reaction Time VS WM load and ILI
 perf_mRT = perfNback %>% 
-  ggplot (aes(x = nback, y = mRT,
-              group = ILI,
-              colour = ILI)) +
+  ggplot (aes(x = nback, y = mRT, group = ILI, colour = ILI)) +
   geom_point(size = 2) +
   geom_line(aes(group = ILI), size = 1) +
   theme_classic() +
   labs(x = "WM load", y = "Mean Reaction Time (ms)") +
-  theme( legend.text = element_text(size = 11),
-         legend.title = element_text(size = 11),
+  theme( legend.text = element_text(size = 11), legend.title = element_text(size = 11),
           axis.text = element_text(size = 12),
   plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
-  geom_errorbar(aes(ymin =mRT - semmRT, ymax = mRT + semmRT),
-                colour = "black",
-                width = .05) +
-  scale_y_continuous(breaks = seq(from = 560, to = 660, by = 20),
-limits = c(550, 660)) +
+  geom_errorbar(aes(ymin =mRT - semmRT, ymax = mRT + semmRT), colour = "black", width = .05) +
+  scale_y_continuous(breaks = seq(from = 560, to = 660, by = 20), limits = c(550, 660)) +
   scale_colour_manual(values = cbPalette2_v2, labels = c("1500ms", "1800ms"))
 
 
@@ -776,18 +1737,15 @@ title <- ggdraw() + draw_label(
 
 plot_row = plot_grid(perf_HR, perf_FA, perf_mRT, nrow=1, labels=c('A', 'B', 'C'))
           
-# jpeg("PerfNbackILIretroS1.jpg", width = 4000, height = 2500, units = "px",res=600)
-  plot_grid(
-  title, plot_row,
-  ncol = 1,
-  rel_heights = c(0.1, 1)) # rel_heights values control vertical title margins
-# dev.off()s
+# jpeg("PerfNbackILIretro.jpg", width = 4000, height = 2500, units = "px",res=600)
+  plot_grid(title, plot_row, ncol = 1, rel_heights = c(0.1, 1)) 
+# dev.off()
   
   
 ```
 
 
-##Subjective vs Objective Duration (with and without ILI)
+#Subjective vs Objective Duration (with and without ILI)
 ```{r}
 #Duration estimation tables 
 
@@ -803,79 +1761,51 @@ durations_by_ILI <- Nback_blocks%>%
   summarize(DD = mean(timing_error), semDD = sem(timing_error))
 
 
-
 #Subjective vs Objective Duration graph
-DD_vs_OD_Nback = durations %>% ggplot (aes(x = duration,
-                                              y = DD,
-                                              group = nback,
-                                              colour = nback)) +
+DD_vs_OD_Nback = durations %>% ggplot (aes(x = duration,y = DD, group = nback, colour = nback)) +
 scale_y_continuous(breaks = seq(from = -20, to = 0, by = 5),
                      limits = c(-23, 5)) +
-  geom_hline(aes(yintercept = 0), 
-             colour = 'black', 
-             size = .5, 
-             linetype = "dashed") +
+  geom_hline(aes(yintercept = 0), colour = 'black', size = .5, linetype = "dashed") +
   geom_point(size = 2) +
   geom_line(aes(group = nback), size = 1) +
   theme_classic() +
   labs(y = "Subjective Duration Deviation (s)", x = "Objective Task Duration") +
-  theme(legend.text = element_text(size = 11),
-         legend.title  = element_text(size = 12),
-        axis.title.x = element_text(size = 12),
-         axis.title.y = element_text(size = 12),
-          axis.text = element_text(size = 12),
+  theme(legend.text = element_text(size = 11), legend.title  = element_text(size = 12), axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12), axis.text = element_text(size = 12),
   legend.position = c(.90, .65),
   plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
-  geom_errorbar(aes(ymin = DD - semDD, ymax = DD + semDD),
-                colour = "black",
-                width = .05) +
+  geom_errorbar(aes(ymin = DD - semDD, ymax = DD + semDD), colour = "black", width = .05) +
   scale_colour_manual(values = cbPalette, labels = c("1-back", "3-back"), name = "WM load")
 
 #Subjective vs Objective Duration with ILI
 DD_vs_OD_ILI = durations_by_ILI %>%
-  ggplot (aes(x = duration,
-                 y = DD,
-                group = ILI,
-                colour = ILI)) +
+  ggplot (aes(x = duration, y = DD, group = ILI, colour = ILI)) +
   scale_y_continuous(breaks = seq(from = -20, to = 0, by = 5),
                      limits = c(-23, 5)) +
-  geom_hline(aes(yintercept = 0), 
-             colour = 'black', 
-             size = .5, 
-             linetype = "dashed") +
+  geom_hline(aes(yintercept = 0),  colour = 'black',size = .5, linetype = "dashed") +
   geom_point(size = 2) +
   geom_line(aes(group = ILI), size = 1) +
   theme_classic() +
   labs(y = "Subjective Duration Deviation (s)", x = "Objective Task Duration") +
-  theme( legend.text = element_text(size = 11),
-         legend.title  = element_text(size = 12),
-         axis.title.x = element_text(size = 12),
-         axis.title.y = element_text(size = 12),
-          axis.text = element_text(size = 12),
+  theme(legend.text = element_text(size = 11), legend.title  = element_text(size = 12), axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12), axis.text = element_text(size = 12),
   legend.position = c(.50, .6),
   plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
-  geom_errorbar(aes(ymin = DD - semDD, ymax = DD + semDD),
-                colour = "black",
-                width = .05) +
+  geom_errorbar(aes(ymin = DD - semDD, ymax = DD + semDD), colour = "black", width = .05) +
  scale_colour_manual(values = cbPalette2_v2, labels = c("1500ms", "1800ms")) +
   facet_grid(.~nback)
 
 
 #Merge the two graphs
-title <- ggdraw() + draw_label(
-    "Subjective Duration Deviation VS Objective Duration for different conditions",
-    fontface = 'bold', size = 13) +
-  theme(plot.margin = margin(0, 5, 10 ,0))
+title <- ggdraw() + draw_label("Subjective Duration Deviation VS Objective Duration for different conditions",
+    fontface = 'bold', size = 13) + theme(plot.margin = margin(0, 5, 10 ,0))
 
-plot_row = plot_grid(DD_vs_OD_Nback + theme(plot.margin = margin(0, 30, 0, 0)),
+plot_row <- plot_grid(DD_vs_OD_Nback + theme(plot.margin = margin(0, 30, 0, 0)),
   DD_vs_OD_ILI + theme(plot.margin = margin(0, 10, 0, 0)),  
   nrow=1, labels=c('A', 'B'),  rel_widths =  c(3, 5))
           
-# jpeg("SD_ODretroS1.jpg", width = 5000, height = 2500, units = "px",res=600)
-  plot_grid(
-  title, plot_row,
-  ncol = 1,
-  rel_heights = c(0.1, 1))
+# jpeg("SD_ODretro.jpg", width = 5000, height = 2500, units = "px",res=600)
+  plot_grid(title, plot_row, ncol = 1, rel_heights = c(0.1, 1))
 # dev.off()
 
 
@@ -883,113 +1813,16 @@ plot_row = plot_grid(DD_vs_OD_Nback + theme(plot.margin = margin(0, 30, 0, 0)),
 
 
 
-##Timing Error Violin Plot
+
+
+#Coefficient of variation and Variance
 ```{r}
-
-Violin_1TE <- Nback_blocks %>% 
-  filter(nback == "1back") %>%
-  ggplot(aes(duration, timing_error, colour = duration)) +
-  geom_hline(aes(yintercept = 0), 
-             colour = 'black', 
-             size = .5, 
-             linetype = "dashed") +
-  geom_violin(outlier.shape=NA) +
-  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
-stat_summary(fun = mean)  +
-  theme_classic() +
-  labs(y = "Timing Error (s)", x = "Task Duration", title = "1-back (N = 413)") +
-  theme( legend.position="none",
-        axis.title.x = element_text(size = 12),
-         axis.title.y = element_text(size = 12),
-        axis.text = element_text(size = 12),
-  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + scale_y_continuous(breaks = seq(from = -90, to = 90, by = 15),
-                     limits = c(-90, 100)) +
-  scale_colour_manual(values = cbPalette2) +
- stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", comparisons = list(c("45s","90s")))
-
-
-Violin_3TE <- Nback_blocks %>% 
-  filter(nback == "3back") %>%
-  ggplot(aes(duration, timing_error, colour = duration)) +
-  geom_hline(aes(yintercept = 0), 
-             colour = 'black', 
-             size = .5, 
-             linetype = "dashed") +
-  geom_violin() +
-  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
-  stat_summary(fun = mean)  +
-  theme_classic() +
-  labs(y = "Timing Error (s)", x = "Task Duration", title = "3-back (N = 404)") +
-  theme( legend.position="none",
-        axis.title.x = element_text(size = 12),
-         axis.title.y = element_text(size = 12),
-          axis.text = element_text(size = 12),
-  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + scale_y_continuous(breaks = seq(from = -90, to = 90, by = 15),
-                     limits = c(-90, 100)) +
-  scale_colour_manual(values = cbPalette2) +
- stat_compare_means( method = "wilcox.test", paired = FALSE, label = "p.format", comparisons = list(c("45s","90s")))
-
-
-#Merge the two graphs
-title <- ggdraw() + draw_label(
-    "Timing Error distribution vs Task Duration for 1-back and 3-back",
-    fontface = 'bold', size = 13) +
-  theme(plot.margin = margin(0, 5, 10 ,0))
-
-plot_row = plot_grid(Violin_1TE + theme(plot.margin = margin(0, 30, 0, 0)),
-  Violin_3TE + theme(plot.margin = margin(0, 10, 0, 0)),  
-  nrow=1)
-          
-# jpeg("ViolinTEretro.jpg", width = 5000, height = 2500, units = "px",res=600)
-  plot_grid(
-  title, plot_row,
-  ncol = 1,
-  rel_heights = c(0.1, 1))
-# dev.off()
-
-```
-
-
-##D' effect on timing error
-```{r}
-Nback_blocks %>%
-  filter(nback == "1back") %>%
-  ggplot(aes(dprime, timing_error, colour = duration)) +
-  geom_point() +
-  geom_smooth(method=lm, fill="#69b3a2", se= F) +
-  theme_classic() +
-   labs(y = "Timing Error (s)", x = "d'", title = "Timing Error vs D' for 1-back tasks") +
-  theme(axis.title.x = element_text(size = 12),
-         axis.title.y = element_text(size = 12),
-          axis.text = element_text(size = 12),
-  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + scale_y_continuous(breaks = seq(from = -90, to = 90, by = 15),
-                     limits = c(-90, 100)) +
-  scale_colour_manual(values = cbPalette2) 
-
-
-Nback_blocks %>%
-  ggplot(aes(dprime, timing_error)) +
-  geom_point() +
-  geom_smooth(method=lm, fill="#69b3a2", se= T) +
-  theme_classic() +
-   labs(y = "Timing Error (s)", x = "d'", title = "Timing Error vs D'") +
-  theme(axis.title.x = element_text(size = 12),
-         axis.title.y = element_text(size = 12),
-          axis.text = element_text(size = 12),
-  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + scale_y_continuous(breaks = seq(from = -90, to = 90, by = 15),
-                     limits = c(-90, 100)) +
-  scale_colour_manual(values = cbPalette2) 
-```
-
-
-##Coefficient of variation and Variance
-```{r}
-
+#Variance
 SD_Var <- Nback_blocks %>% 
   group_by(nback) %>%
   group_by(duration, .add =T) %>%
-  summarise(VarSD = var(as.numeric(as.character(translated))), 
-            semSD = sd(as.numeric(as.character(translated))/sqrt(n())))
+  summarise(VarSD = var(estimate), 
+            semSD = sd(estimate)/sqrt(n()))
 
 SDvar_duration_nback <- ggplot(data = SD_Var,
              aes(x = nback,
@@ -1005,74 +1838,19 @@ SDvar_duration_nback <- ggplot(data = SD_Var,
         plot.title = element_text(face = "bold", "hjust" = 0.5)) +
   scale_fill_manual(values = cbPalette4, name = "Duration",
   labels = c("45s", "90s", "45s", "90s")) +
-  geom_bar(stat = "identity", width = .7, position = "dodge", alpha = 0.5) +
-  geom_errorbar(aes(ymin =VarSD - semSD, ymax = VarSD + semSD),
-  width = 0.1,
-  show.legend = FALSE)
-  # position = position_dodge(.8)) 
-  # geom_signif(stat="identity",
-  #             data=data.frame(x=c(0.875, 1.875), xend=c(1.125, 2.125),
-  #                             y=c(5.8, 8.5), annotation=c("**", "**")),
-  #             aes(x=x,xend=xend, y=y, yend=y, annotation=annotation)) 
-  # geom_signif(comparisons=list(c("S1", "S2")), annotations="***",
-  #             y_position = 9.3, tip_length = 0, vjust=0.4) 
+  geom_bar(stat = "identity", width = .7, position = "dodge", alpha = 0.5) 
 
-
-CVtime <- Nback_blocks %>% 
-  group_by(nback) %>%
+#Coefficient of Variation
+CVtime <- Nback_blocks %>%
   group_by(duration, .add =T) %>% 
-  summarise(CV = (sd(as.numeric(as.character(translated)))/mean(as.numeric(as.character(translated)))), semCV = sem(as.numeric(as.character(translated)))/100)
-
-CV_WM_duration <- CVtime %>%  
-  ggplot (aes(x = duration, y = CV,
-              group = nback,
-              colour = nback)) +
-  geom_point(size = 2) +
-  geom_line(aes(group = nback), size = 1) +
-  theme_classic() +
-    labs(y = "CV", x = "task duration") +
-  theme(legend.title = element_text(size = 10), 
-    legend.text = element_text(size = 9),
-          axis.text = element_text(size = 12),
-  legend.position = c(.8, .8),
-  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
-  geom_errorbar(aes(ymin = CV - semCV, ymax = CV + semCV),
-                width = .05,
-                color = "black") +
-  # scale_y_continuous(breaks = seq(from = 0.52, to = 0.46, by = 0.1),
-  #                    limits = c(0.46,0.52)) +
-  scale_colour_manual(values = cbPalette2,
-                      labels = c("1-back", "3-back")) 
-
-
-
-title <- ggdraw() + draw_label(
-    "Subjective duration variance and CV vs WM load vs task duration",
-    fontface = 'bold', size = 13,
-  ) +
-  theme(plot.margin = margin(0, 5, 10 ,0))
-
-
-plot_row <- plot_grid(SDvar_duration_nback, CV_WM_duration, nrow=1, labels=c('A', 'B'), rel_widths =  c(2, 1.4))
-          
-# jpeg("CV_retroNback_duration_S1.jpg", width = 4000, height = 2500, units = "px",res=600)
-  plot_grid(
-  title, plot_row,
-  ncol = 1,
-  rel_heights = c(0.1, 1)
-)
-# dev.off()
-  
-  
-  CVtime <- Nback_blocks %>% 
-  group_by(duration, .add =T) %>% 
-  summarise(CV = (sd(as.numeric(as.character(translated)))/mean(as.numeric(as.character(translated)))), semCV = sem(as.numeric(as.character(translated)))/100)
+  summarise(CV = sd(estimate)/mean(estimate), semCV = sem(estimate)/100)
 
 CV_WM_duration <- CVtime %>%  
   ggplot (aes(x = duration, y = CV)) +
   geom_point(size = 2) +
+  geom_line(aes(x = duration, y = CV), size = 1) +
   theme_classic() +
-    labs(y = "CV", x = "task duration") +
+    labs(y = "estimation CV", x = "Task Duration") +
   theme(legend.title = element_text(size = 10), 
     legend.text = element_text(size = 9),
           axis.text = element_text(size = 12),
@@ -1081,155 +1859,86 @@ CV_WM_duration <- CVtime %>%
   geom_errorbar(aes(ymin = CV - semCV, ymax = CV + semCV),
                 width = .05,
                 color = "black") 
-CV_WM_duration
 
 
+title <- ggdraw() + draw_label("Subjective duration variance and CV vs Task Dr((uration",
+    fontface = 'bold', size = 13) + theme(plot.margin = margin(0, 5, 10 ,0))
 
-
-
+plot_row <- plot_grid(SDvar_duration_nback, CV_WM_duration, nrow=1, labels=c('A', 'B'), rel_widths =  c(2, 1.4))
+          
+# jpeg("CV_Varianceretro.jpg", width = 4000, height = 2500, units = "px",res=600)
+  plot_grid(title, plot_row, ncol = 1, rel_heights = c(0.1, 1))
+# dev.off()
 ```
-
-
-
-#Bias : log(Beta)
-```{r}
-#Log(beta) distribution
-# jpeg("DistributionD'S1.jpg", width = 4000, height = 2500, units = "px",res=600)
-Nback_blocks %>%
-  ggplot(aes(logbeta)) + 
-  facet_grid(.~nback) +
-           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02,
-                   colour = "black" , fill="white") + 
-  labs(y = "count", x = "log(β)", title ="log(β) distribution for 1-back and 3-back") + 
-  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
-  # scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
-  #                limits = c(-0.01,1.01))
- # dev.off()
-
-
-
-Nback_blocks %>%
-  filter(nback == "1back") %>%
-  ggplot(aes(logbeta, timing_error, colour = duration)) +
-  geom_point() +
-  geom_smooth(method=lm, fill="#69b3a2", se= F) +
-  theme_classic() +
-   labs(y = "Timing Error (s)", x = "log(β)", title = "Timing Error vs log(β) for 1-back tasks") +
-  theme(axis.title.x = element_text(size = 12),
-         axis.title.y = element_text(size = 12),
-          axis.text = element_text(size = 12),
-  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + scale_y_continuous(breaks = seq(from = -90, to = 90, by = 15),
-                     limits = c(-90, 100)) +
-  scale_colour_manual(values = cbPalette2) 
-
-
-Nback_blocks %>%
-  ggplot(aes(logbeta, timing_error, colour = duration)) +
-  geom_point() +
-  geom_smooth(method=lm, fill="#69b3a2", se= T) +
-  theme_classic() +
-   labs(y = "Timing Error (s)", x = "log(β)", title = "Timing Error vs log(β)") +
-  theme(axis.title.x = element_text(size = 12),
-         axis.title.y = element_text(size = 12),
-          axis.text = element_text(size = 12),
-  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + scale_y_continuous(breaks = seq(from = -90, to = 90, by = 15),
-                     limits = c(-90, 100)) +
-  scale_colour_manual(values = cbPalette2) 
-```
-
 
 
 # Linear models Effects of duration, D' and bias on Timing Error
 ```{r}
 data <- Nback_blocks 
 
-M1 <-lm(timing_error ~ duration, data=data)
 
-M2 <-lm(timing_error ~ duration + nback, data=data)ue
-lrtest(M1, M2) #M1 nested #M2 more complex   p > 0.05  #the complex model is not significantly more accurate
+M1 <-lm(timing_error ~ dprime, data=data)
 
-M3 <-lm(timing_error ~ duration * nback, data=data)
-lrtest(M1, M3) #M1 nested #M3 more complex   p > 0.05  #the complex model is not significantly more accurate
+M2 <-lm(timing_error ~ logbeta + dprime, data=data)
+lrtest(M1, M2)  #n.s
 
-M4 <-lm(timing_error ~ duration + ILI, data=data)
-lrtest(M1, M4) #M1 nested #M4 more complex   #n.s  
+M3 <-lm(timing_error ~ dprime + ILI, data=data)
+lrtest(M1, M3) #n.s
 
-M5 <-lm(timing_error ~ duration * ILI, data=data)
-lrtest(M1, M5)  #n.s
+M4 <-lm(timing_error ~ dprime + nback, data=data)
+lrtest(M1, M4) #n.s
 
-M6 <-lm(timing_error ~ duration + ILI + nback, data=data)
-lrtest(M1, M6)  #n.s
+M5 <-lm(timing_error ~ dprime + duration, data=data)
+lrtest(M1, M5) #p < 0.05
 
-M7 <-lm(timing_error ~ duration + ILI * nback, data=data)
-lrtest(M1, M7)  #n.s
+M6 <-lm(timing_error ~ dprime * duration, data=data)
+lrtest(M5, M6) #n.s
 
-M8 <-lm(timing_error ~ duration * ILI * nback, data=data)
-lrtest(M1, M8)  #n.s
+M7 <-lm(timing_error ~ logbeta + duration + dprime, data=data)
+lrtest(M5, M7) #n.s
 
+M8 <-lm(timing_error ~ logbeta * duration + dprime, data=data)
+lrtest(M5, M8) #p =~ 0.05 
 
+M9 <-lm(timing_error ~ logbeta * duration * dprime, data=data)
+lrtest(M5, M9) #p < 0.05  But very high correlation between explanatory variables
 
-M9 <-lm(timing_error ~ duration + dprime, data=data)
-lrtest(M1, M9) #p < 0.05
+M10 <-lm(timing_error ~ logbeta + duration * dprime, data=data)
+lrtest(M5, M10) #n.s
 
-M10 <-lm(timing_error ~ duration * dprime, data=data)
-lrtest(M9, M10) #n.s
-
-M11 <- lm(timing_error ~ duration + dprime + logbeta, data=data)
-lrtest(M9, M11)  #n.s
-
-M12 <- lm(timing_error ~ duration * logbeta + dprime , data=data)
-lrtest(M9, M12)  #p = 0.05
-
-M13 <- lm(timing_error ~ duration * logbeta * dprime , data=data)
-lrtest(M12, M13)  #p < 0.05
-
-M14 <- lm(timing_error ~ duration + duration:logbeta + duration:dprime , data=data)
-lrtest(M13, M14)  #p 
-
-
-# M9 <- lm(timing_error ~ duration + poly(dprime,3), data = data)
-
-compare_performance(M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13)
+compare_performance(M1, M2, M3, M4, M5, M6, M7, M8, M9, M10) #M8 best AIC
 
 summary(M1)
-summary(M2)
-summary(M3)
-summary(M4)
 summary(M5)
 summary(M6)
 summary(M7)
 summary(M8)
 summary(M9)
 summary(M10)
+
+# M11 <-lm(timing_error ~ duration:logbeta + logbeta + duration + dprime, data=data)
+
+summary(M8)
 summary(M11)
-summary(M12)
-summary(M13)
-summary(M14)
-
-#we choose M13 !
+check_heteroscedasticity(M8) #OK
+check_autocorrelation(M8) #OK
+check_collinearity(M8) #OK (only low correlation) residuals are independent and not auto-correlated
 
 
-anova(M13)
-
-#  # -- Main effects--   => Significant effect
-emmeans(M13, ~ duration)
-
+anova(M8)
 
 
 # Verification of model assumptions ####
 
-check_heteroscedasticity(M13) #homoscedasticity
-check_autocorrelation(M13) #residuals are indepedent and not auto-correlated
-check_collinearity(M13)
-plot(M13)
+plot(M8)
 
-R1 <- resid(M13) #residuals
-F1 <- fitted(M13) #fitted values
+R1 <- resid(M8) #residuals
+F1 <- fitted(M8) #fitted values
 
 
 ## residuals distribution : histogramme and shapiro test for normality
 hist(R1, breaks = 30)
-check_normality(M13) #non-normality
+check_normality(M8) #non-normality
 
 
 ## independance : residuals vs each model covariable
@@ -1241,7 +1950,7 @@ boxplot(R1 ~ duration,
 abline(h = 0, lty = 2)
 
 #D' 
-predictions <- summary(emmeans(M13, ~ duration * logbeta * dprime, at = list(dprime = seq(0,5, by = 0.1))))
+predictions <- summary(emmeans(M8, ~ duration * logbeta + dprime, at = list(dprime = seq(0,5, by = 0.1))))
 
 # jpeg("model", width = 4000, height = 2500, units = "px",res=600)
 ggplot(data, aes(dprime, timing_error)) +
@@ -1253,7 +1962,7 @@ geom_point(predictions, mapping = aes(y= emmean, colour = duration)) +
 
 
 #Bias
-predictions <- summary(emmeans(M13, ~ duration * logbeta * dprime, at = list(logbeta = seq(-3,3, by = 0.1))))
+predictions <- summary(emmeans(M8, ~ duration * logbeta + dprime, at = list(logbeta = seq(-3,3, by = 0.1))))
 
 # jpeg("model", width = 4000, height = 2500, units = "px",res=600)
 ggplot(data, aes(y = timing_error, x =logbeta)) +
@@ -1262,216 +1971,13 @@ geom_point(size = 0.7) +
 geom_point(predictions, mapping = aes(y= emmean, colour = duration)) +
   labs(y = "Timing Error (s)", x = "log(β)")
 # dev.off()
-```
 
 
+summary(M8)
 
+emmeans(M8, "dprime", at = list(dprime = c(1, 2, 3, 4)))
+emmeans(M8, ~ duration | logbeta, at = list(logbeta = c(-1, 0, 1)))
 
-
-#PASSAGE OF TIME JUDGMENT (PoTJ)
-
-
-#PoTJ tables
-```{r}
-
-
-
-Likert_nback <- Nback_blocks %>%
-  filter(Run == 1) %>%
-   filter(!is.na(likert)) %>%
-  mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly")) %>%
-	group_by(nback, likert) %>%  # grouping by these two variables
-	tally() %>%  # counting the number of responses
-	mutate(perc = n / sum(n) * 100) %>%
-	select(-n) %>%
-	group_by(nback) %>%
-	spread(likert, perc) %>% 
-  rename(design = nback)
-   
-
-Likert_ILI <- Nback_blocks %>%
-   filter(Run == 1) %>%
-   filter(!is.na(likert)) %>%
-  mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly")) %>%
-	group_by(ILI, likert) %>%  # grouping by these two variables
-	tally() %>%  # counting the number of responses
-	mutate(perc = n / sum(n) * 100) %>%
-	select(-n) %>%
-	group_by(ILI) %>%
-	spread(likert, perc) %>% 
-  rename(design = ILI) %>% 
-  mutate(design = fct_recode(design, "1500ms" = "1500", "1800ms" = "1800"))
-
-Likert_duration <- Nback_blocks %>%
-   filter(Run == 1) %>%
-   filter(!is.na(likert)) %>%
-  mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly")) %>%
-	group_by(duration, likert) %>%  # grouping by these two variables
-	tally() %>%  # counting the number of responses
-	mutate(perc = n / sum(n) * 100) %>%
-	select(-n) %>%
-	group_by(duration) %>%
-	spread(likert, perc) %>% 
-  rename(design = duration) %>%
-  mutate(design = fct_recode(design, "45s" = "45", "90s" = "90"))
-   
-Likert_all <- bind_rows(Likert_ILI, Likert_nback, Likert_duration)
-  
-paged_table(Likert_all)  
-
-Likert_all
-```
-
-
-#Diverged stacking bar
-```{r}
-#PoTJ vs Duration
-likert_hi_lo <- Likert_duration %>%
-	mutate(midlow = Normally / 2,
-		midhigh = Normally / 2) %>%
-	select(design, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
-	gather(key = response, value = perc, 2:7) 
-	colnames <- (c("duration", "response", "perc"))
-
-
-likert_lo <- likert_hi_lo %>%
-	filter(response %in% c( "midlow", "Slowly", "Very Slowly")) %>%
-	mutate(response = factor(response, levels = c("Very Slowly", "Slowly", "midlow")))
-
-likert_hi <- likert_hi_lo %>%
-	filter(response %in% c( "Very Quickly", "Quickly", "midhigh")) %>%
-	mutate(response = factor(response, levels = c("Very Quickly", "Quickly", "midhigh")))
-
-
-
-# Use RColorBrewer to store a preset diverging colour palette as a vector of colour codes 
-legend_pal <- brewer.pal(name = "RdBu", n = 5)
-
-# Duplicate the middle value, remember that "Sometimes" is actually two groups, "midhigh" and "midlow"
-legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
-
-# Replace the ugly white colour for "Sometimes" with a pleasant dishwater grey
-legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
-
-# Assign names to the vector based on the colours we want for each group
-# legend_pal =  c("#E69F00", "#56B4E9", "#009E73", "#F0E442",
-#                 "#D55E00", "#CC79A7")
-names(legend_pal) <- c("Very Quickly", "Quickly","midhigh", "midlow", "Slowly", "Very Slowly" )
-
-# jpeg("divergingBarLikert.jpg", width = 5000, height = 2500, units = "px",res=600)
-ggplot() + 
-	geom_bar(data = likert_hi, aes(x = design, y=perc, fill = response), stat="identity", width = 0.5) +
-	geom_bar(data = likert_lo, aes(x = design, y=-perc, fill = response), stat="identity", width = 0.5) + 
-	geom_hline(yintercept = 0, color =c("black")) + 
-	scale_fill_manual(values = legend_pal, 
-		breaks = c("Very Quickly", "Quickly", "midhigh", "Slowly", "Very Slowly" ),
-		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
-	coord_flip() + 
-	labs(x = "duration", y = "Percentage of respondents (%)", title = "Diverging stacked bar of likert scale PoTJ for different durations") +
-  scale_y_continuous(breaks = seq(from = -50, to = 75, 10),
-                     limits = c(-52,80)) +
-	theme_classic()
-# dev.off()
-	
-	
-	
-	#PoTJ vs Duration
-	likert_hi_lo <- Likert_ILI %>%
-	mutate(midlow = Normally / 2,
-		midhigh = Normally / 2) %>%
-	select(design, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
-	gather(key = response, value = perc, 2:7) 
-	colnames <- (c("ILI", "response", "perc"))
-
-
-likert_lo <- likert_hi_lo %>%
-	filter(response %in% c( "midlow", "Slowly", "Very Slowly")) %>%
-	mutate(response = factor(response, levels = c("Very Slowly", "Slowly", "midlow")))
-
-likert_hi <- likert_hi_lo %>%
-	filter(response %in% c( "Very Quickly", "Quickly", "midhigh")) %>%
-	mutate(response = factor(response, levels = c("Very Quickly", "Quickly", "midhigh")))
-
-
-
-# Use RColorBrewer to store a preset diverging colour palette as a vector of colour codes 
-legend_pal <- brewer.pal(name = "RdBu", n = 5)
-
-# Duplicate the middle value, remember that "Sometimes" is actually two groups, "midhigh" and "midlow"
-legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
-
-# Replace the ugly white colour for "Sometimes" with a pleasant dishwater grey
-legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
-
-# Assign names to the vector based on the colours we want for each group
-# legend_pal =  c("#E69F00", "#56B4E9", "#009E73", "#F0E442",
-#                 "#D55E00", "#CC79A7")
-names(legend_pal) <- c("Very Quickly", "Quickly","midhigh", "midlow", "Slowly", "Very Slowly" )
-
-# jpeg("divergingBarLikert.jpg", width = 5000, height = 2500, units = "px",res=600)
-ggplot() + 
-	geom_bar(data = likert_hi, aes(x = design, y=perc, fill = response), stat="identity", width = 0.5) +
-	geom_bar(data = likert_lo, aes(x = design, y=-perc, fill = response), stat="identity", width = 0.5) + 
-	geom_hline(yintercept = 0, color =c("black")) + 
-	scale_fill_manual(values = legend_pal, 
-		breaks = c("Very Quickly", "Quickly", "midhigh", "Slowly", "Very Slowly" ),
-		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
-	coord_flip() + 
-	labs(x = "ILI", y = "Percentage of respondents (%)", title = "Diverging stacked bar of likert scale PoTJ for different ILIs") +
-  scale_y_continuous(breaks = seq(from = -50, to = 70, by = 10),
-                     limits = c(-52,72)) +
-	theme_classic()
-# dev.off()
-	
-	
-
-
-#PoTJ vs WM Load
-	likert_hi_lo <- Likert_nback %>%
-	mutate(midlow = Normally / 2,
-		midhigh = Normally / 2) %>%
-	select(design, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
-	gather(key = response, value = perc, 2:7) 
-	colnames <- (c("nback", "response", "perc"))
-
-
-likert_lo <- likert_hi_lo %>%
-	filter(response %in% c( "midlow", "Slowly", "Very Slowly")) %>%
-	mutate(response = factor(response, levels = c("Very Slowly", "Slowly", "midlow")))
-
-likert_hi <- likert_hi_lo %>%
-	filter(response %in% c( "Very Quickly", "Quickly", "midhigh")) %>%
-	mutate(response = factor(response, levels = c("Very Quickly", "Quickly", "midhigh")))
-
-
-
-# Use RColorBrewer to store a preset diverging colour palette as a vector of colour codes 
-legend_pal <- brewer.pal(name = "RdBu", n = 5)
-
-# Duplicate the middle value, remember that "Sometimes" is actually two groups, "midhigh" and "midlow"
-legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
-
-# Replace the ugly white colour for "Sometimes" with a pleasant dishwater grey
-legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
-
-# Assign names to the vector based on the colours we want for each group
-# legend_pal =  c("#E69F00", "#56B4E9", "#009E73", "#F0E442",
-#                 "#D55E00", "#CC79A7")
-names(legend_pal) <- c("Very Quickly", "Quickly","midhigh", "midlow", "Slowly", "Very Slowly" )
-
-# jpeg("divergingBarLikert.jpg", width = 5000, height = 2500, units = "px",res=600)
-ggplot() + 
-	geom_bar(data = likert_hi, aes(x = design, y=perc, fill = response), stat="identity", width = 0.5) +
-	geom_bar(data = likert_lo, aes(x = design, y=-perc, fill = response), stat="identity", width = 0.5) + 
-	geom_hline(yintercept = 0, color =c("black")) + 
-	scale_fill_manual(values = legend_pal, 
-		breaks = c("Very Quickly", "Quickly", "midhigh", "Slowly", "Very Slowly" ),
-		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
-	coord_flip() + 
-	labs(x = "WM Load", y = "Percentage of respondents (%)", title = "Diverging stacked bar of likert scale PoTJ for different WM load") +
-	theme_classic()
-# dev.off()
-	
 ```
 
 
@@ -1487,7 +1993,7 @@ Likert_1backduration <- Nback_blocks %>%
 	group_by(duration, likert) %>%  # grouping by these two variables
 	tally() %>%  # counting the number of responses
 	mutate(perc = n / sum(n) * 100) %>%
-	select(-n) %>%
+	dplyr::select(-n) %>%
 	group_by(duration) %>%
 	spread(likert, perc) 
 
@@ -1499,7 +2005,7 @@ Likert_3backduration <- Nback_blocks %>%
 	group_by(duration, likert) %>%  # grouping by these two variables
 	tally() %>%  # counting the number of responses
 	mutate(perc = n / sum(n) * 100) %>%
-	select(-n) %>%
+	dplyr::select(-n) %>%
 	group_by(duration) %>%
 	spread(likert, perc) 
 
@@ -1512,7 +2018,7 @@ Likert_duration
 likert_hi_lo <- Likert_duration %>%
 	mutate(midlow = Normally / 2,
 		midhigh = Normally / 2) %>%
-	select(duration, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
+	dplyr::select(duration, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
 	gather(key = response, value = perc, 2:7) 
 	colnames <- (c("duration", "response", "perc"))
 
@@ -1560,110 +2066,163 @@ ggplot() +
 #useless because durations effect is big compared to wm load effect
 ```
 
-
-
-#Passing of time statistic models
+#Correlation  Duration Judgment X PoTJ
 ```{r}
-
-#no effect of d'
-#effect of ILI, duration and nback + interaction Bias / nback
-
-data = Nback_blocks %>%
-  filter(!is.na(likert_n))
-
-library(MASS)
-
-m1 = polr(likert_n ~ duration, data, Hess=T)
-
-m2 = polr(likert_n ~ duration + ILI, data, Hess=T)
-lrtest(m1,m2)  # p < 0.05
-
-m3 = polr(likert_n ~ duration + ILI + nback, data, Hess=T)
-lrtest(m2,m3)  # p < 0.05
-
-m4 = polr(likert_n ~ duration * nback * ILI, data, Hess=T)
-lrtest(m3,m4)  # n.s
-
-m5 = polr(likert_n ~ duration + ILI + nback * logbeta, data, Hess=T)
-lrtest(m3,m5)   # p < 0.05
-
-m6 = polr(likert_n ~ duration * logbeta * nback * ILI , data, Hess=T)
-lrtest(m5,m6)  # n.s
-
-m7 = polr(likert_n ~ duration + logbeta * nback * ILI , data, Hess=T)
-lrtest(m5,m7) # n.s
-
-m8 = polr(likert_n ~ duration + logbeta * nback + ILI + dprime , data, Hess=T)
-lrtest(m5,m8) # n.s
-
-m9 = polr(likert_n ~ duration * nback * logbeta  + ILI + dprime , data, Hess=T)
-lrtest(m5,m9) # n.s
-
-summary(m1)
-summary(m2)
-summary(m3)
-summary(m4)
-summary(m5)
-summary(m6)
-summary(m7)
-summary(m8)
-
-compare_performance(m1, m2, m3, m4, m5, m6, m7, m8)
-
-#we choose m5
-
-coeffs <- coef(summary(m5))
-p <- pnorm(abs(coeffs[, "t value"]), lower.tail = FALSE) * 2
-cbind(coeffs, "p value" = round(p,3))
-
-# -- Main effect of duration --
-
-duration.emm <- emmeans(m5, ~ duration) 
-duration.emm
-plot(duration.emm, by = NULL, comparisons = TRUE, adjust = "mvt", 
-     horizontal = FALSE, colors = "darkgreen")
-pwpp(duration.emm)
-
-
-# -- Main effect of ILI --
-
-ILI.emm <- emmeans(m5, ~ ILI) 
-ILI.emm
-plot(ILI.emm, by = NULL, comparisons = TRUE, adjust = "mvt", 
-     horizontal = FALSE, colors = "darkgreen")
-pwpp(ILI.emm)
-
-# -- Main effect of nback --
-
-nback.emm <- emmeans(m5, ~ nback) 
-nback.emm
-plot(nback.emm, by = NULL, comparisons = TRUE, adjust = "mvt", 
-     horizontal = FALSE, colors = "darkgreen")
-pwpp(nback.emm)
-
-# Verification of model assumptions ####
-
-check_collinearity(m5)
-
-R1 <- resid(m5) #residuals
-F1 <- fitted(m5) #fitted values
-
-library(sure)
-
-autoplot(m5, x = c("nback", ""), what = "covariate")
+cor(Nback_blocks$timing_error, as.numeric(as.character(Nback_blocks$likert_n)), method = "spearman", use = "complete.obs")
 ```
+
+##PoTJ VS ILI, WM Load & Duration (design paramaters) - 3 diverging stacked bar
 ```{r}
+#PoTJ vs Duration
+likert_hi_lo <- Likert_duration %>%
+	mutate(midlow = Normally / 2,
+		midhigh = Normally / 2) %>%
+	dplyr::select(design, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
+	gather(key = response, value = perc, 2:7) 
+	colnames <- (c("duration", "response", "perc"))
+
+
+likert_lo <- likert_hi_lo %>%
+	filter(response %in% c( "midlow", "Slowly", "Very Slowly")) %>%
+	mutate(response = factor(response, levels = c("Very Slowly", "Slowly", "midlow")))
+
+likert_hi <- likert_hi_lo %>%
+	filter(response %in% c( "Very Quickly", "Quickly", "midhigh")) %>%
+	mutate(response = factor(response, levels = c("Very Quickly", "Quickly", "midhigh")))
+
+legend_pal <- brewer.pal(name = "RdBu", n = 5)
+
+legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
+
+legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
+
+names(legend_pal) <- c("Very Quickly", "Quickly","midhigh", "midlow", "Slowly", "Very Slowly" )
+
+POTJduration <- ggplot() + 
+	geom_bar(data = likert_hi, aes(x = design, y=perc, fill = response), stat="identity", width = 0.5) +
+	geom_bar(data = likert_lo, aes(x = design, y=-perc, fill = response), stat="identity", width = 0.5) + 
+	geom_hline(yintercept = 0, color =c("black")) + 
+	scale_fill_manual(values = legend_pal, 
+		breaks = c("Very Quickly", "Quickly", "midhigh", "Slowly", "Very Slowly" ),
+		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
+	coord_flip() + 
+	labs(x = "duration", y = "Percentage of respondents (%)") +
+  scale_y_continuous(breaks = seq(from = -40, to = 80, 20),
+                     limits = c(-45,80)) +
+	theme_classic()
+	
+	
+	
+	#PoTJ vs ILI
+likert_hi_lo <- Likert_ILI %>%
+	mutate(midlow = Normally / 2,
+		midhigh = Normally / 2) %>%
+	dplyr::select(design, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
+	gather(key = response, value = perc, 2:7) 
+	colnames <- (c("ILI", "response", "perc"))
+
+
+likert_lo <- likert_hi_lo %>%
+	filter(response %in% c( "midlow", "Slowly", "Very Slowly")) %>%
+	mutate(response = factor(response, levels = c("Very Slowly", "Slowly", "midlow")))
+
+likert_hi <- likert_hi_lo %>%
+	filter(response %in% c( "Very Quickly", "Quickly", "midhigh")) %>%
+	mutate(response = factor(response, levels = c("Very Quickly", "Quickly", "midhigh")))
+
+
+legend_pal <- brewer.pal(name = "RdBu", n = 5)
+
+legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
+
+legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
+
+names(legend_pal) <- c("Very Quickly", "Quickly","midhigh", "midlow", "Slowly", "Very Slowly" )
+
+POTJILI <- ggplot() + 
+	geom_bar(data = likert_hi, aes(x = design, y=perc, fill = response), stat="identity", width = 0.5) +
+	geom_bar(data = likert_lo, aes(x = design, y=-perc, fill = response), stat="identity", width = 0.5) + 
+	geom_hline(yintercept = 0, color =c("black")) + 
+	scale_fill_manual(values = legend_pal, 
+		breaks = c("Very Quickly", "Quickly", "midhigh", "Slowly", "Very Slowly" ),
+		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
+	coord_flip() + 
+	labs(x = "ILI", y = "Percentage of respondents (%)") +
+  scale_y_continuous(breaks = seq(from = -40, to = 80, 20),
+                     limits = c(-45,80)) +
+	theme_classic()
+	
+	
+
+
+#PoTJ vs WM Load
+	likert_hi_lo <- Likert_nback %>%
+	mutate(midlow = Normally / 2,
+		midhigh = Normally / 2) %>%
+	dplyr::select(design, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
+	gather(key = response, value = perc, 2:7) 
+	colnames <- (c("nback", "response", "perc"))
+
+
+likert_lo <- likert_hi_lo %>%
+	filter(response %in% c( "midlow", "Slowly", "Very Slowly")) %>%
+	mutate(response = factor(response, levels = c("Very Slowly", "Slowly", "midlow")))
+
+likert_hi <- likert_hi_lo %>%
+	filter(response %in% c( "Very Quickly", "Quickly", "midhigh")) %>%
+	mutate(response = factor(response, levels = c("Very Quickly", "Quickly", "midhigh")))
+
+legend_pal <- brewer.pal(name = "RdBu", n = 5)
+
+legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
+
+legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
+
+names(legend_pal) <- c("Very Quickly", "Quickly","midhigh", "midlow", "Slowly", "Very Slowly" )
+
+POTJNback <- ggplot() + 
+	geom_bar(data = likert_hi, aes(x = design, y=perc, fill = response), stat="identity", width = 0.5) +
+	geom_bar(data = likert_lo, aes(x = design, y=-perc, fill = response), stat="identity", width = 0.5) + 
+	geom_hline(yintercept = 0, color =c("black")) + 
+	scale_fill_manual(values = legend_pal, 
+		breaks = c("Very Quickly", "Quickly", "midhigh", "Slowly", "Very Slowly" ),
+		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
+	coord_flip() + 
+	labs(x = "WM Load", y = "Percentage of respondents (%)") +
+  scale_y_continuous(breaks = seq(from = -40, to = 80, 20),
+                     limits = c(-45,80)) +
+	theme_classic()
+	
+
+POTJNback <- POTJNback + theme(legend.position = "none")
+POTJduration <- POTJduration+ theme(legend.position = "none")
+POTJILI = POTJILI + theme(legend.position = "none")
+
+#Merge the three graphs
+
+          
+# jpeg("divergingBarLikertretro2", width = 3000, height = 2500, units = "px",res=600)
+  plot_grid( POTJNback, POTJduration, POTJILI, nrow = 3)
+  # dev.off()
+```
+
+##Bias X PoTJ violin plot 2
+```{r}
+
 Nback_blocks <- Nback_blocks %>%
-  mutate(ratio = as.numeric(as.character(translated)) / parse_number(as.character(duration)))
+  mutate(relative_timing = estimate / parse_number(as.character(duration)),
+         likert2 = ifelse(likert == "Very Slowly" | likert == "Slowly", "Slowly", as.character(likert)),
+         likert2 = ifelse(likert == "Very Quickly" | likert == "Quickly", "Quickly", as.character(likert2)),
+         likert2 = fct_relevel(likert2, c("Slowly", "Normally", "Quickly")))
 
 
-my_xlab <- paste(levels(Nback_blocks$likert),"\n(N=",table(Nback_blocks$likert),")", sep="")
-my_comparison = list( c("Very Slowly", "Normally"), c("Normally", "Very Quickly"), c("Very Slowly", "Very Quickly"))
+my_xlab <- paste(levels(Nback_blocks$likert2),"\n(N=",table(Nback_blocks$likert2),")", sep="")
+my_comparison = list( c("Slowly", "Normally"), c("Normally", "Quickly"), c("Slowly", "Quickly"))
 
 
 Nback_blocks %>% 
-  filter( !is.na(likert)) %>%
-   ggplot(aes(y = ratio, x = likert, fill = likert)) + 
+  filter( !is.na(likert2)) %>%
+   ggplot(aes(y = relative_timing, x = likert2, fill = likert2)) + 
   geom_violin(varwidth = TRUE, width= 1, outlier.size = 0.1) +
   geom_hline(aes(yintercept = 1), colour = 'black', size = .5, linetype = "dashed") +
   geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
@@ -1672,28 +2231,13 @@ Nback_blocks %>%
                      limits = c(0, 3)) +
   stat_summary(fun = mean)  +
   scale_fill_viridis(discrete = TRUE, alpha=0.3, name = "In the last round,\nthe time seemed \nto have passed:",
-		labels = c("Very slowly", "Slowly", "Normally", "Quickly","Very quickly"  )) +
+		labels = c("Slowly", "Normally", "Quickly")) +
    theme_classic() +  
-  labs(y = "Subjective duration / Objective duration (s)", x ="PoTJ", title = "Timing Error vs Passage of Time Judgment") + 
+  labs(y = "Relative Timing", x ="PoTJ", title = "Relative Timing vs Passage of Time Judgment") + 
   theme(plot.title = element_text(face = "bold", "hjust" = 0.3)) +
   theme( legend.text = element_text(size = 10),
           axis.text = element_text(size = 11), 
  axis.title = element_text(size = 12)) +
  stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", 
                     label.y = c(2.7,2.8,3), comparison = my_comparison)
-
-
-
-
-
-
 ```
-
-
-#Correlation  Duration Judgment X PoTJ
-```{r}
-cor(Nback_blocks$timing_error, as.numeric(as.character(Nback_blocks$likert_n)), method = "spearman", use = "complete.obs")
-```
-
-
-
