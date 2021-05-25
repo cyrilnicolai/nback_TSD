@@ -909,6 +909,8 @@ R1 <- resid(M8) #residuals
 F1 <- fitted(M8) #fitted values
 
 
+
+
 ## residuals distribution : histogramme and shapiro test for normality
 hist(R1, breaks = 30)
 check_normality(M8) #non-normality --> to resolve
@@ -946,6 +948,7 @@ geom_point(predictions, mapping = aes(y= emmean, colour = duration)) +
 # dev.off()
 
 
+
 #determine emmeans
 emmeans(M8, "dprime", at = list(dprime = c(1, 2, 3, 4)))
 emmeans(M8, ~ duration | logbeta, at = list(logbeta = c(-1, 0, 1)))
@@ -958,10 +961,12 @@ emmeans(M8, ~ duration | logbeta, at = list(logbeta = c(-1, 0, 1)))
 Nback_blocks %>%
   ggplot(aes(dprime, relative_timing)) +
   geom_point(size = 0.5) +
-  geom_smooth(method=lm, fill="#69b3a2", se= T) +
+  geom_smooth(method="lm", fill="#69b3a2", se= T) +
   geom_hline(aes(yintercept = 1), colour = 'black', size = .3, linetype = "dashed") +
   theme_classic() +
-   labs(y = "Relative Timing (s)", x = "d'", title = "Relative Timing vs D'") +
+   scale_y_continuous(breaks = seq(from = 0, to = 2.5, by = 0.5),
+                     limits = c(0, 2.7)) +
+   labs(y = "rDE", x = "d'", title = "Relative Duration Estimation vs D'") +
   theme(axis.title.x = element_text(size = 12),
          axis.title.y = element_text(size = 12),
           axis.text = element_text(size = 12),
