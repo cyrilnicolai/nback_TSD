@@ -1,0 +1,2131 @@
+---
+title: "SC_S1_nback_analysis"
+output: html_document
+---
+
+
+
+#DEF
+
+##packages
+```{r, include= F}
+library(tidyverse)
+library(rmarkdown)
+library(ggpubr)
+library(viridis)
+library(cowplot)
+
+library(lme4)
+library(lmtest)
+library(performance)
+library(emmeans)
+
+library(R.utils)
+library(RColorBrewer)
+
+library(factoextra)
+library(moments)
+library(ordinal)
+library(sure)
+library(stargazer)
+```
+
+##Functions
+```{r, include= F}
+## Standard Error of the Mean (SEM)
+sem <- function(x, na.rm=FALSE) {
+     if(na.rm==TRUE) x <- na.omit(x)
+     sd(x)/sqrt(length(x)) 
+}  #Don't forget 10 ms bruit gorilla  
+
+##coefficent of variation
+cv <- function(x){sd(x)/mean(x)}
+
+#Z-score
+z_score <- function(x){(x - mean(x)) / sd(x)}
+
+## Outliers removal
+remove_outliers <- function(x, na.rm = TRUE, ...) {
+qnt <- quantile(x, probs = c(.25, .75), na.rm = na.rm, ...)
+H <- 1.5 * IQR(x, na.rm = na.rm)
+Y <- x
+Y[x < (qnt[1] - H)] <- NA
+Y[x > (qnt[2] + H)] <- NA
+Y}
+
+```
+
+##Palettes
+```{r, include= F}
+#Palettes of colours
+cbPalette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442",
+               "#0072B2", "#D55E00", "#CC79A7")
+
+cbPalette2 <- c("#0072B2", "#CC79A7")
+
+cbPalette2_v2 <- c("#66c2a4", "#fc8d59")
+
+cbPalette4 <- c( "#56B4E9", "#009E73", "#E69F00", "#D55E00", "#CC79A7")
+
+cbPalette5 <- c( "#CC79A7", "#009E73")
+```
+
+
+
+
+#FORMATTING DATA AND OUTLIERS REMOVAL
+
+
+##Merging dataset from S1 and SC
+```{r}
+#Session control Retrospective
+file <- "/home/cyril/Documents/Cognition & Brain Dynamics/TimeSocialDistancing/nback_TSD/SCglobal_nback.csv"
+
+SCNbackOG <- read.csv2(file, sep = ",") #138.530 obs
+
+  
+#Session 1 Retrospective
+
+file <- "/home/cyril/Documents/Cognition & Brain Dynamics/TimeSocialDistancing/nback_TSD/S1global_nback.csv"
+
+S1NbackOG = read.csv2(file, sep = ",") %>% #592.095 obs
+mutate(translated = parse_number(translated))
+
+#merge the two dataset
+
+
+
+NbackOG <- bind_rows(S1NbackOG, SCNbackOG) #1184190
+
+
+
+```
+
+
+
+
+
+##Formatting dataset
+```{r}
+
+# Each row is a participant response
+#Defining if the letter is a target letter and if an answer is a hit, a correct reject, a miss or a false alarm. 
+Nback_all <- NbackOG %>%           #138530 obs
+   filter(!is.na(translated)) %>%
+         mutate(PID = as.factor(PID),
+         estimate = as.numeric(as.character(translated)),
+         relative_timing = estimate / parse_number(as.character(duration)),
+         timing_error = estimate - parse_number(as.character(duration)),
+         age = as.numeric(as.character(Age)))
+        
+
+
+
+# Each row is a different trial
+Nback_blocksOG <- Nback_all %>%    #15839 trials
+  group_by(Session, .add = T) %>%
+  group_by(Country, .add = T) %>%
+  group_by(PID, .add = T) %>%
+  group_by(Run, .add = T) %>%
+  group_by(nback, .add =T) %>%
+  group_by(ILI, duration, block_nb, .add = T) %>%
+  summarise(condition = first(condition),
+            likert = first(likert),
+            estimate = first(estimate),
+            timing_error = first(timing_error),
+            relative_timing = first(relative_timing),
+            ntarget = first(ntarget),
+            notarget = first(notarget),
+            mRT = mean(as.numeric(as.character(Reaction_Time))),
+            hit = sum(response_arrow == "Left" & Correct == T),
+            miss  = sum(response_arrow == "Down" & Correct == F),
+            fa = sum(response_arrow == "Left" & Correct == F),
+            cr = sum(response_arrow == "Down" & Correct == T),
+            HR = sum(response_arrow == "Left" & Correct == T)/ntarget,
+            # HR1 = sum(response_arrow == "Left" & Correct == T)/(miss + hit),
+            FA = sum(response_arrow == "Left" & Correct == F)/notarget,
+            # FA1 = sum(response_arrow == "Left" & Correct == F)/(fa + cr),
+            CR = sum(response_arrow == "Down" & Correct == T)/notarget,
+            MR = sum(response_arrow == "Down" & Correct == F)/ntarget,
+            handedness = first(Handedness),
+            age = first(Age),
+            sex = first(Sex),
+            timestamp = first(timestamp)) %>%
+  ungroup() 
+ 
+#translate PoTJ Likert Scale from different countries in English
+veryquickly = c("muy rápido", "Très rapidement","Πολύ Γρήγορα","Very Fast","Molto veloce","Çok hızlı","とても速かった")
+quickly = c("rápido", "Rapidement","Γρήγορα","Fast","Veloce","Hızlı","速かった")
+normally = c("Normalement", "Κανονικά", "Neutral", "Neutrale", "普通", "Nötr", "normal")
+slowly = c("lento","Lentement","Αργά","Slow","Very Slow","Lentamente","Yavaş", "遅かった") 
+veryslowly = c("Muy lento", "Très lentement","Πολύ Αργά","Molto lentamente","Çok yavaş","とても遅かった")
+
+Nback_blocksOG <- Nback_blocksOG %>%
+  mutate(likert = ifelse(likert %in% veryquickly, "Very Quickly", as.character(likert)),
+         likert = ifelse(likert %in% quickly, "Quickly", as.character(likert)),
+         likert = ifelse(likert %in% normally, "Normally", as.character(likert)),
+         likert = ifelse(likert %in% slowly, "Slowly", as.character(likert)),
+         likert = ifelse(likert %in% veryslowly, "Very Slowly", as.character(likert))) %>%
+  mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly"))
+
+#dprime computation and dealing with score >= 1 or =< 0
+Nback_blocksOG <- Nback_blocksOG %>%
+  filter(HR < 1.2 & MR < 1.5) %>%
+  mutate(HR = ifelse(HR > 1, 1, HR),
+         FA = ifelse(FA > 1, 1, FA),
+         CR = ifelse(CR > 1, 1, CR),
+         HR = ifelse(HR == 0, 0.01, HR),
+  HR = ifelse(HR == 1, 0.99, HR),
+  FA = ifelse(FA == 0, 0.01, FA),
+  FA = ifelse(FA == 1, 0.99, FA),
+  zHR = qnorm(HR),
+  zFA = qnorm(FA),
+  dprime = zHR - zFA,
+  beta = exp(-zHR*zHR/2+zFA*zFA/2),
+  logbeta = log(beta))
+
+
+Nback_blocksOG <- Nback_blocksOG %>%
+  dplyr::select(-ntarget, -notarget, - hit, -miss, -fa, -cr, -zHR, -zFA)
+
+
+
+paged_table(Nback_blocksOG) #19519 obs
+
+
+```
+
+
+
+
+
+
+#Separate
+```{r}
+Nback_blocksOG <- Nback_blocksOG %>%
+  group_by(PID) %>%
+  arrange(timestamp) %>%
+  mutate(timestamp2 = as.character(timestamp)) %>%
+  mutate(order = row_number()) 
+  
+
+S1retro_blocks <- Nback_blocksOG %>% #1100
+  filter(order == 1 & Session == "S1") %>%
+  mutate(paradigm = "retrospective")
+
+SCretro_blocks <- Nback_blocksOG %>% #199
+  filter(order == 1 & Session == "SC") %>%
+  mutate(paradigm = "retrospective")
+
+S1pro_blocks <- Nback_blocksOG %>% #14691
+  filter(order != 1 & Session == "S1") %>%
+  mutate(paradigm = "prospective")
+
+SCpro_blocks <- Nback_blocksOG %>% #3529
+  filter(order != 1 & Session == "SC") %>%
+  mutate(paradigm = "prospective")
+```
+
+#Outliers S1 prospective trials
+```{r}
+#Outliers on d'
+
+perf_outliers <- S1pro_blocks %>%
+filter(dprime <= 0) #2487 outliers (750 out of ~7381 1-back tasks -> ~10%, 1737 out of ~7310 3-back -> ~24%)
+
+S1pro_blocks <- S1pro_blocks %>%
+filter(dprime > 0)     #14691 --> 12204 obs
+
+
+#Outliers on TE
+
+S1pro_blocks <- S1pro_blocks %>%
+  group_by(duration) %>%
+  mutate(ZTiming = scale(timing_error)) %>%
+  ungroup()
+
+estimation_outliers <- S1pro_blocks %>%
+filter(abs(ZTiming) > 2)    #363  outliers  (159 out of 5960 for 45s : 2.7%, 204 out 6244 of for 90s : 3.3%)
+
+S1pro_blocks <-  S1pro_blocks %>%        #12204 -> 11841 trials
+  filter(abs(ZTiming) <= 2 ) %>%
+  dplyr::select(-ZTiming) 
+```
+
+
+#Outliers S1 retrospective trials
+```{r}
+#Outliers on d'
+
+perf_outliers <- S1retro_blocks %>%
+filter(dprime <= 0) #227 outliers (72 1-back)
+
+S1retro_blocks <- S1retro_blocks %>%
+filter(dprime > 0)     #1100 --> 873 obs
+
+
+#Outliers on TE
+
+S1retro_blocks <- S1retro_blocks %>%
+  group_by(duration) %>%
+  mutate(ZTiming = scale(timing_error)) %>%
+  ungroup()
+
+estimation_outliers <- S1retro_blocks %>%
+filter(abs(ZTiming) > 2)    #28 outliers  (12 for 45s)
+
+S1retro_blocks <-  S1retro_blocks %>%        #873 -> 845 trials
+  filter(abs(ZTiming) <= 2 ) %>%
+  dplyr::select(-ZTiming) 
+
+```
+
+
+#Outliers SC retrospective trials
+```{r}
+perf_outliers <- SCretro_blocks %>%
+filter(dprime <= 0) #42 outliers out of 199 obs ~ 21 % (11 outliers for 1-back trials)
+
+SCretro_blocks <- SCretro_blocks %>%
+filter(dprime > 0)     #199 --> 157 obs 
+
+
+
+#Outliers on TE
+
+SCretro_blocks <- SCretro_blocks %>%
+  group_by(duration) %>%
+  mutate(ZTiming = scale(timing_error)) %>%
+  ungroup()
+
+estimation_outliers <- SCretro_blocks %>%
+filter(abs(ZTiming) > 2)    #8  outliers --> 5.7% (4 for 45s)
+
+SCretro_blocks <-  SCretro_blocks %>%        #157 -> 149 trials
+  filter(abs(ZTiming) <= 2 ) %>%
+  dplyr::select(-ZTiming) 
+```
+
+
+#Outliers SC prospective trials
+```{r}
+perf_outliers <- SCpro_blocks %>%
+filter(dprime <= 0) #598 outliers (out of ~3529 obs ~ 17 %)
+
+SCpro_blocks <- SCpro_blocks %>%
+filter(dprime > 0)     #3529 --> 2931 obs (we removed ~17.6% of the tasks)
+
+
+#Outliers on TE
+
+SCpro_blocks <- SCpro_blocks %>%
+  group_by(duration) %>%
+  mutate(ZTiming = scale(timing_error)) %>%
+  ungroup()
+
+estimation_outliers <- SCpro_blocks %>%
+filter(abs(ZTiming) > 2)    #89  outliers --> 3% (39 for 45s)
+
+SCpro_blocks <-  SCpro_blocks %>%        #2931 -> 2842 trials
+  filter(abs(ZTiming) <= 2 ) %>%
+  dplyr::select(-ZTiming) 
+```
+
+
+```{r}
+Nback_blocks <- bind_rows(SCpro_blocks, SCretro_blocks, S1pro_blocks, S1retro_blocks) #15677
+```
+
+
+
+
+# N-BACK PERFORMANCE 2 (D', Bias, mRT)
+
+
+##Mixed-effect  models on d', bias and mRT
+```{r}
+data <- Nback_blocks #15677
+
+## Model for d'
+
+
+
+Md1 <-lmer(dprime ~ nback + (1|PID), data=data,  REML=FALSE)
+
+Md2 <-lmer(dprime ~ nback + ILI + (1|PID), data=data,  REML=FALSE)
+lrtest(Md1, Md2)  #p < 0.05*** -> More complex model (Md2) significantly better than Md1
+
+Md3 <-lmer(dprime ~ nback + duration + ILI + (1|PID), data=data,  REML=FALSE)
+lrtest(Md2, Md3)  #p < 0.05***
+
+Md4 <-lmer(dprime ~ nback * duration + ILI + (1|PID), data=data,  REML=FALSE)
+lrtest(Md3, Md4)  #p =~ 0.90
+
+Md5 <-lmer(dprime ~ nback + duration * ILI + (1|PID), data=data,  REML=FALSE)
+lrtest(Md3, Md5) #p =~ 0.90
+
+Md6 <-lmer(dprime ~ duration + nback * ILI + (1|PID), data=data,  REML=FALSE)
+lrtest(Md3, Md6) #p =~ 0.90
+
+Md7 <-lmer(dprime ~ duration + nback + ILI + Session + (1|PID), data=data,  REML=FALSE)
+lrtest(Md3, Md7) #p =~ 0.90
+
+Md8 <-lmer(dprime ~ duration + nback + ILI + paradigm + (1|PID), data=data,  REML=FALSE)
+lrtest(Md3, Md8)  #p < 0.05***
+
+Md9 <-lmer(dprime ~ nback + ILI + paradigm * duration + (1|PID), data=data,  REML=FALSE)
+lrtest(Md8, Md9)  #p < 0.05***   other interactions between paradigm and design conditions (Nback and ILI) were not significant
+
+Md10 <-lmer(dprime ~ nback + ILI + duration * paradigm + (nback|PID), data=data,  REML=FALSE)
+lrtest(Md9, Md10) #p < 0.05*** 
+
+Md11 <-lmer(dprime ~ nback + ILI + duration * paradigm + (nback + duration|PID), data=data,  REML=FALSE)
+lrtest(Md10, Md11) #p < 0.05***  but fit is singular (and duration as a random effect explain very poorly the variance)
+
+Md12 <-lmer(dprime ~ nback + ILI + duration * paradigm + (nback + ILI|PID), data=data,  REML=FALSE)
+lrtest(Md10, Md12) #p > 0.05  + the fit is singular
+
+Md13 <-lmer(dprime ~ nback + ILI + duration * paradigm + (nback + paradigm|PID), data=data,  REML=FALSE)
+lrtest(Md10, Md13) #p < 0.05*** 
+
+
+
+compare_performance(Md1, Md2, Md3, Md4, Md5, Md6, Md7, Md8, Md9, Md10, Md11, Md12, Md13) #Md13 best AIC
+
+summary(Md1)
+summary(Md2)
+summary(Md3) 
+summary(Md4)
+summary(Md5)
+summary(Md6)
+summary(Md7)
+summary(Md8)
+summary(Md9)
+summary(Md10)
+summary(Md11)
+summary(Md12)
+summary(Md13) #best model, show significant effect of design conditions and of the paradigm used (main effect + interaction with duration) + WM Load and Paradigm as random effects
+
+
+Md13 <-lmer(dprime ~ nback + ILI + duration * paradigm + (nback + paradigm|PID), data=data,  REML= T)
+summary(Md13)
+stargazer(Md13, type = "text",
+           title = "Regression results Md3",
+          header = FALSE,
+          single.row = TRUE,
+          digits = 3,
+          star.cutoffs = c(0.05, 0.01, 0.001),
+          digit.separator = "")
+
+emmeans(Md13, ~paradigm,  lmer.df = "satterthwaite")
+emmeans(Md13, ~ nback,  lmer.df = "satterthwaite")
+emmeans(Md13, ~ ILI,  lmer.df = "satterthwaite")
+emmeans(Md13, ~ duration,  lmer.df = "satterthwaite")#Does Md13 meet assumptions ?
+emmeans(Md13, pairwise ~ duration + paradigm,  lmer.df = "satterthwaite")
+
+
+#autocorrelation
+check_autocorrelation(Md13)
+durbinWatsonTest(resid(Md13)) # = 2 no autocorrelation
+
+check_heteroscedasticity(Md13) #not OK, but graphically OK
+check_collinearity(Md13) #OK
+
+
+lm <- lm(dprime ~ duration + ILI + nback, data = data)
+plot(lm)
+plot(Md13)
+
+
+
+
+
+## residuals distribution : histogramme and shapiro test for normality
+hist(resid(Md13), breaks = 30)
+qqnorm(residuals(Md13))
+
+
+## homogeneity : fitted values vs normalized residuals
+
+plot(x = data$dprime, 
+     y = resid(Md13), 
+     xlab = "d'",
+     ylab = "Normalized residuals")
+abline(h = 0, lty = 2)
+
+## independance : residuals vs each model covariable
+
+boxplot(resid(Md13) ~ duration,   
+        ylab = "Normalized residuals",
+        data = data, xlab = "task duration")
+abline(h = 0, lty = 2)
+
+boxplot(resid(Md13) ~ nback,   
+        ylab = "Normalized residuals",
+        data = data, xlab = "nback")
+abline(h = 0, lty = 2)
+
+boxplot(resid(Md13) ~ ILI,   
+        ylab = "Normalized residuals",
+        data = data, xlab = "ILI")
+abline(h = 0, lty = 2)
+
+
+
+
+#heteroscedascity between random effects
+plot(Md13, as.factor(PID) ~ resid(., scaled=TRUE),abline=0,pch=16,xlab="Standardised residuals",ylab="Regions")
+
+
+# require("lattice")
+#It is also important to check that the random effect distribution(s) match the assumed (most often Gaussian) dsitrbibution
+# lattice::dotplot(ranef(Md7, condVar=TRUE))
+
+```
+
+
+##d' violin plot
+```{r}
+
+violindSession <- Nback_blocks %>% 
+  ggplot(aes(Session, dprime, colour = Session)) +
+  geom_violin(outlier.shape=NA) +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+stat_summary(fun = mean)  +
+  theme_classic() +
+  labs(y = "d'", x = "Session", title = "Session x d'") +
+  theme( legend.position="none",
+        axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+        axis.text = element_text(size = 12),
+  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + 
+  scale_colour_manual(values = cbPalette2) +
+   stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", comparisons = list(c("SC","S1")))
+
+
+violindParadigm <- Nback_blocks %>% 
+  ggplot(aes(paradigm, dprime, colour = paradigm)) +
+  geom_violin() +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+  stat_summary(fun = mean)  +
+  theme_classic() +
+  labs(y = "d'", x = "Paradigm", title = "Paradigm x d'") +
+  theme( legend.position="none",
+        axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + 
+  scale_colour_manual(values = cbPalette2_v2) +
+ stat_compare_means( method = "wilcox.test", paired = FALSE, label = "p.format", comparisons = list(c("retrospective","prospective")))
+
+
+
+#Merge the two graphs
+title <- ggdraw() + draw_label("d' distribution vs Design",
+    fontface = 'bold', size = 13) + theme(plot.margin = margin(0, 5, 10 ,0))
+
+plot_row = plot_grid(violindParadigm + theme(plot.margin = margin(0, 30, 0, 0)),
+  violindSession + theme(plot.margin = margin(0, 10, 0, 0)), nrow=1)
+          
+# jpeg("Violind'ParadigmSession.jpg", width = 5000, height = 2500, units = "px",res=600)
+  plot_grid(title, plot_row, ncol = 1, rel_heights = c(0.1, 1))
+# dev.off()
+  
+# jpeg("Violind'Session.jpg", width = 2500, height = 2500, units = "px",res=600)
+violindSession
+# dev.off()
+  
+# jpeg("Violind'Paradigm.jpg", width = 2500, height = 2500, units = "px",res=600)
+violindParadigm
+# dev.off()
+
+
+  
+```
+
+
+
+##Models for Bias (log(Beta))
+```{r}
+
+
+MB1 <-lmer(logbeta ~ duration + (1|PID), data=data,  REML=FALSE)
+
+MB2 <-lmer(logbeta ~ duration + ILI + (1|PID), data=data,  REML=FALSE)
+lrtest(MB1, MB2)  #p < 0.05** -> More complex model (MB2) significantly better than MB1
+
+MB3 <-lmer(logbeta ~ duration + ILI + nback +(1|PID), data=data,  REML=FALSE)
+lrtest(MB2, MB3) #p < 0.05*** -> More complex model (MB3) significantly better than MB2
+
+MB4 <-lmer(logbeta ~ ILI + duration * nback + (1|PID), data=data,  REML=FALSE)
+lrtest(MB3, MB4)  #p < 0.05*** -> More complex model (MB4) significantly better than MB3
+
+MB5 <-lmer(logbeta ~ ILI * duration + nback +(1|PID), data=data,  REML=FALSE)
+lrtest(MB4, MB5)  #p < 0.05*** -> More complex model (MB5) significantly better than MB4 but MB4 has a better AIC
+
+MB6 <-lmer(logbeta ~ ILI * nback + duration +(1|PID), data=data,  REML=FALSE)
+lrtest(MB4, MB6) #p < 0.05*** -> More complex model (MB6) significantly better than MB4 but MB4 has a better AIC
+
+MB7 <-lmer(logbeta ~ ILI * nback * duration +(1|PID), data=data,  REML=FALSE)
+lrtest(MB4, MB7) #p < 0.05*** -> More complex model (MB7) significantly better than MB4  but MODERATE COLLINEARITY
+
+MB8 <-lmer(logbeta ~ ILI * nback * duration + Session + (1|PID), data=data,  REML=FALSE)
+lrtest(MB7, MB8) #p = 0.05 . -> More complex model (MB8) significantly better than MB7    but MODERATE COLLINEARITY
+
+MB9 <-lmer(logbeta ~ ILI * nback * duration + paradigm + (1|PID), data=data,  REML=FALSE)
+lrtest(MB8, MB9) #p < 0.05*** -> More complex model (MB9) significantly better than MB8 
+
+MB10 <-lmer(logbeta ~ ILI * nback * duration + paradigm + Session:duration + (1|PID), data=data,  REML=FALSE)
+lrtest(MB9, MB10) #p < 0.05**  other interactions with Session not significant
+
+MB11 <-lmer(logbeta ~ ILI * nback * duration + paradigm + Session:duration + paradigm:duration +  paradigm:ILI + paradigm:nback + (1|PID), data=data,  REML=FALSE)
+lrtest(MB10, MB11) #p < 0.05*** -> More complex model (MB10) not significantly better than MB8 AND SINGULAR
+
+MB12 <-lmer(logbeta ~ ILI * nback * duration + paradigm + Session:duration + paradigm:duration +  paradigm:ILI + paradigm:nback + (nback|PID), data=data,  REML=FALSE)
+lrtest(MB11, MB12) #p < 0.05*** 
+
+MB13 <-lmer(logbeta ~ ILI * nback * duration + paradigm + Session:duration + paradigm:duration +  paradigm:ILI + paradigm:nback + (nback + duration|PID), data=data,  REML=FALSE)
+lrtest(MB12, MB13) #p < 0.05***  but fit is singular (ILI and Session as random model were not significant, Paradigm was significant but the fit was singular)
+
+
+
+compare_performance(MB1, MB2, MB3, MB4, MB5, MB6, MB7, MB8, MB9, MB10, MB11, MB12, MB13) #MB13 (and then MB12)-> best AIC but singular
+
+
+summary(MB3)
+summary(MB4)  
+summary(MB5)
+summary(MB6)
+summary(MB7)
+summary(MB8) 
+summary(MB9)
+summary(MB10)
+summary(MB11)
+summary(MB12) #best model MB12 --> shows significative main effects of ILI, duration, nback and Paradigmn on Bias + interactions between task duration and session
+summary(MB13) 
+
+
+
+MB12 <-lmer(logbeta ~ ILI * nback * duration + paradigm + Session:duration + paradigm:duration +  paradigm:ILI + paradigm:nback + (nback|PID), data=data,  REML= T)
+summary(MB12)
+stargazer(MB12, type = "text",
+           title = "Regression results MB12",
+          header = FALSE,
+          single.row = TRUE,
+          digits = 3,
+          star.cutoffs = c(0.05, 0.01, 0.001),
+          digit.separator = "")
+
+emmeans(MB12, ~nback,  lmer.df = "satterthwaite")
+emmeans(MB12, ~duration,  lmer.df = "satterthwaite")
+emmeans(MB12, ~ILI,  lmer.df = "satterthwaite")
+emmeans(MB12, ~paradigm,  lmer.df = "satterthwaite")
+emmeans(MB12, pairwise ~ILI + nback,  lmer.df = "satterthwaite")
+emmeans(MB12, pairwise ~ duration + nback,  lmer.df = "satterthwaite")
+emmeans(MB12, pairwise ~ILI + duration,  lmer.df = "satterthwaite")
+emmeans(MB12, pairwise ~ILI + paradigm,  lmer.df = "satterthwaite")
+emmeans(MB12, pairwise ~ duration + paradigm,  lmer.df = "satterthwaite")
+emmeans(MB12, pairwise ~ nback + paradigm,  lmer.df = "satterthwaite")
+emmeans(MB12, pairwise ~ Session + duration,  lmer.df = "satterthwaite")
+
+#Does MB12 meet assumptions ?
+
+check_autocorrelation(MB12)
+durbinWatsonTest(resid(MB12)) # = 2 no autocorrelation
+
+
+check_heteroscedasticity(MB12) #not OK, but graphically OK
+check_collinearity(MB12) #OK, low/moderate correlation
+
+plot(MB12)
+qqnorm(residuals(MB12))
+
+## residuals distribution : histogramme and shapiro test for normality
+hist(resid(MB12), breaks = 30)
+
+## homogeneity : fitted values vs normalized residuals
+plot(x = data$logbeta, 
+     y = resid(MB12), 
+     xlab = "Bias",
+     ylab = "Normalized residuals")
+abline(h = 0, lty = 2)
+
+## independance : residuals vs each model covariable
+
+boxplot(resid(MB12) ~ duration,   
+        ylab = "Normalized residuals",
+        data = data, xlab = "task duration")
+abline(h = 0, lty = 2)
+
+boxplot(resid(MB12) ~ nback,   
+        ylab = "Normalized residuals",
+        data = data, xlab = "nback")
+abline(h = 0, lty = 2)
+
+boxplot(resid(MB12) ~ ILI,   
+        ylab = "Normalized residuals",
+        data = data, xlab = "ILI")
+abline(h = 0, lty = 2)
+```
+
+
+
+##Bias violin plot
+```{r}
+
+violinBiasSession <- Nback_blocks %>% 
+  ggplot(aes(Session, logbeta, colour = Session)) +
+  geom_violin(outlier.shape=NA) +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+stat_summary(fun = mean)  +
+  theme_classic() +
+  labs(y = "Bias'", x = "Session", title = "Session x Bias") +
+  theme( legend.position="none",
+        axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+        axis.text = element_text(size = 12),
+  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + 
+  scale_colour_manual(values = cbPalette2) +
+   stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", comparisons = list(c("SC","S1")))
+
+
+violinBiasParadigm <- Nback_blocks %>% 
+  ggplot(aes(paradigm, logbeta, colour = paradigm)) +
+  geom_violin() +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+  stat_summary(fun = mean)  +
+  theme_classic() +
+  labs(y = "Bias", x = "Paradigm", title = "Paradigm x Bias") +
+  theme( legend.position="none",
+        axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + 
+  scale_colour_manual(values = cbPalette2_v2) +
+ stat_compare_means( method = "wilcox.test", paired = FALSE, label = "p.format", comparisons = list(c("retrospective","prospective")))
+
+
+
+#Merge the two graphs
+title <- ggdraw() + draw_label("d' distribution vs Design",
+    fontface = 'bold', size = 13) + theme(plot.margin = margin(0, 5, 10 ,0))
+
+plot_row = plot_grid(violinBiasParadigm + theme(plot.margin = margin(0, 30, 0, 0)),
+  violinBiasSession + theme(plot.margin = margin(0, 10, 0, 0)), nrow=1)
+          
+# jpeg("ViolinBiasParadigmSession.jpg", width = 5000, height = 2500, units = "px",res=600)
+  plot_grid(title, plot_row, ncol = 1, rel_heights = c(0.1, 1))
+# dev.off()
+  
+# jpeg("ViolinBiasSession.jpg", width = 2500, height = 2500, units = "px",res=600)
+violinBiasSession
+# dev.off()
+  
+# jpeg("ViolinBiasParadigm.jpg", width = 2500, height = 2500, units = "px",res=600)
+violinBiasParadigm
+# dev.off()
+
+
+
+  
+#INTERATIONS  
+  violinBiasdurationSession <- Nback_blocks %>% 
+    mutate(sessionduration = paste(Session, duration),
+           sessionduration =  fct_relevel(sessionduration, "SC 45s", "S1 45s", "SC 90s", "S1 90s")) %>%
+  ggplot(aes(sessionduration, logbeta, colour = sessionduration)) +
+  geom_violin(outlier.shape=NA) +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+  geom_hline(aes(yintercept = 0), colour = 'black', size = 0.3, linetype = "dashed") +
+stat_summary(fun = mean)  +
+      # facet_grid(ILI~.) +
+  theme_classic() +
+  labs(y = "Bias", x = "Session : Task Duration", title = "Bias for different Session and Task Duration") +
+  theme( legend.position="none",
+        axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+        axis.text = element_text(size = 12),
+  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + 
+  scale_colour_manual(values = cbPalette4) +
+   stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", comparisons = list(c("SC 45s","S1 45s"), c("SC 90s","S1 90s"))) 
+   
+     
+
+# jpeg("violinBiasdurationSession", width = 5000, height = 3500, units = "px",res=600)
+  violinBiasdurationSession
+# dev.off()
+```
+
+
+
+
+
+## Models for mRT
+```{r}
+
+MRT1 <-lmer(mRT ~ duration + (1|PID), data=data,  REML=FALSE)
+
+
+MRT2 <- lmer(mRT ~ duration + ILI +(1|PID), data=data,  REML=FALSE)
+lrtest(MRT1, MRT2) #p < 0.05*** -> More complex model (MRT2) significantly better than MRT1
+
+MRT3 <- lmer(mRT ~ duration + ILI + nback + (1|PID), data=data,  REML=FALSE)
+lrtest(MRT2, MRT3) #p < 0.05*** -> More complex model (MRT3) significantly better than MRT2
+
+MRT4 <- lmer(mRT ~ duration + nback * ILI + (1|PID), data=data,  REML=FALSE)
+lrtest(MRT3, MRT4) #p < 0.05** -> More complex model (MRT4) significantly better than MRT3
+
+MRT5 <- lmer(mRT ~ nback * duration + ILI + (1|PID), data=data,  REML=FALSE)
+lrtest(MRT3, MRT5) #p < 0.05***  but duration x ILI  not significatnt
+
+MRT6 <- lmer(mRT ~ duration + nback + ILI + duration:nback + ILI:nback + (1|PID), data=data,  REML=FALSE)
+lrtest(MRT4, MRT6) #p < 0.05*** -> More complex model (MRT6) is significantly better than MRT4 and has a better AIC
+
+MRT7 <- lmer(mRT ~ duration + nback + ILI + duration:nback + ILI:nback + Session + (1|PID), data=data,  REML=FALSE)
+lrtest(MRT6, MRT7) #p < 0.05*** -> More complex model (MRT7) significantly better than MRT6 and has a better AIC
+
+MRT8 <- lmer(mRT ~ duration + nback + ILI + duration:nback + ILI:nback + Session + paradigm + (1|PID), data=data,  REML=FALSE)
+lrtest(MRT8, MRT7) #p < 0.05*** -> More complex model (MRT8) significantly better than MRT7 
+
+MRT9 <- lmer(mRT ~ duration + nback + ILI + duration:nback + ILI:nback + Session + paradigm + paradigm:nback + (1|PID), data=data,  REML=FALSE)
+lrtest(MRT9, MRT8) #p < 0.05*** ->  but no interactions between Session and other factors
+
+MRT10 <- lmer(mRT ~ duration + nback + ILI + duration:nback + ILI:nback + Session + paradigm + paradigm:nback + paradigm:ILI + (1|PID), data=data,  REML=FALSE)
+lrtest(MRT10, MRT9) #p < 0.05*** ->  but no interactions between paradigm and duration
+
+MRT11 <- lmer(mRT ~ duration + nback + ILI + duration:nback + ILI:nback + Session + paradigm + paradigm:nback + paradigm:ILI + (nback|PID), data=data,  REML=FALSE)
+lrtest(MRT11, MRT10) #p < 0.05*** ->  but no interactions between paradigm and duration
+
+MRT12 <- lmer(mRT ~ duration + nback + ILI + duration:nback + ILI:nback + Session + paradigm + paradigm:nback + paradigm:ILI + (nback + paradigm|PID), data=data,  REML=FALSE)
+lrtest(MRT12, MRT11) #p < 0.05*** -> better model with paradigm as a random effect, but for Session, ILI and nback, p > 0.05 and fit is singular
+
+MRT13 <- lmer(mRT ~ duration + nback + ILI + duration:nback + ILI:nback + Session + paradigm + paradigm:nback + paradigm:ILI + (nback * paradigm|PID), data=data,  REML=FALSE)
+lrtest(MRT13, MRT12)
+
+compare_performance(MRT1, MRT2, MRT3, MRT4, MRT5, MRT6, MRT7, MRT8, MRT9, MRT10, MRT12, MRT13) #MRT7, 8 & 9 -> best AIC but 8 and 9 singular
+
+summary(MRT1)
+summary(MRT2) 
+summary(MRT4)
+summary(MRT5)
+summary(MRT6)
+summary(MRT7)#best model --> shows significative effects of duration and ILI on mean Reaction Time
+summary(MRT8)
+summary(MRT9)
+summary(MRT10)
+summary(MRT11)
+summary(MRT12)
+summary(MRT13)
+
+
+
+MRT13 <- lmer(mRT ~ duration + nback + ILI + duration:nback + ILI:nback + Session + paradigm + paradigm:nback + paradigm:ILI + (nback * paradigm|PID), data=data,  REML=T)
+summary(MRT13)
+stargazer(MRT13, type = "text",
+           title = "Regression results Md7",
+          header = FALSE,
+          single.row = TRUE,
+          digits = 3,
+          star.cutoffs = c(0.05, 0.01, 0.001),
+          digit.separator = "")
+
+emmeans(MRT13, ~nback,  lmer.df = "satterthwaite")
+emmeans(MRT13, ~duration,  lmer.df = "satterthwaite")
+emmeans(MRT13, ~ILI,  lmer.df = "satterthwaite")
+emmeans(MRT13, ~Session,  lmer.df = "satterthwaite")
+emmeans(MRT13, ~paradigm,  lmer.df = "satterthwaite")
+emmeans(MRT13, pairwise ~nback * duration,  lmer.df = "satterthwaite")
+emmeans(MRT13, pairwise ~nback * ILI,  lmer.df = "satterthwaite")
+emmeans(MRT13, pairwise ~nback * paradigm,  lmer.df = "satterthwaite")
+emmeans(MRT13, pairwise ~paradigm * ILI,  lmer.df = "satterthwaite")
+
+ 
+
+#Does MRT13 meet assumptions ?
+
+check_heteroscedasticity(MRT13) #not OK, but graphically OK
+check_collinearity(MRT13) #OK
+
+
+check_autocorrelation(MRT13)
+durbinWatsonTest(resid(MRT13)) # =~ 2 no autocorrelation
+
+
+## residuals distribution : histogramme 
+hist(resid(MRT13), breaks = 50)
+
+
+## homogeneity : fitted values vs normalized residuals
+
+
+plot(x = data$mRT, 
+     y = resid(MRT13), 
+     xlab = "mRT",
+     ylab = "Normalized residuals")
+abline(h = 0, lty = 2)
+
+plot(MRT13)
+
+## independance : residuals vs each model covariable
+
+boxplot(resid(MRT13) ~ duration,   
+        ylab = "Normalized residuals",
+        data = data, xlab = "task duration")
+abline(h = 0, lty = 2)
+
+boxplot(resid(MRT13) ~ nback,   
+        ylab = "Normalized residuals",
+        data = data, xlab = "nback")
+abline(h = 0, lty = 2)
+
+boxplot(resid(MRT13) ~ ILI,   
+        ylab = "Normalized residuals",
+        data = data, xlab = "ILI")
+abline(h = 0, lty = 2)
+```
+
+
+##mRT violin plot
+```{r}
+violinmRTSession <- Nback_blocks %>% 
+  ggplot(aes(Session, mRT, colour = Session)) +
+  geom_violin(outlier.shape=NA) +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+stat_summary(fun = mean)  +
+  theme_classic() +
+  labs(y = "mRT'", x = "Session", title = "Session x mRT") +
+  theme( legend.position="none",
+        axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+        axis.text = element_text(size = 12),
+  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + 
+  scale_colour_manual(values = cbPalette2) +
+   stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", comparisons = list(c("SC","S1")))
+
+
+violinmRTParadigm <- Nback_blocks %>% 
+  ggplot(aes(paradigm, mRT, colour = paradigm)) +
+  geom_violin() +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+  stat_summary(fun = mean)  +
+  theme_classic() +
+  labs(y = "mRT", x = "Paradigm", title = "Paradigm x mRT") +
+  theme( legend.position="none",
+        axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + 
+  scale_colour_manual(values = cbPalette2_v2) +
+ stat_compare_means( method = "wilcox.test", paired = FALSE, label = "p.format", comparisons = list(c("retrospective","prospective")))
+
+
+
+#Merge the two graphs
+title <- ggdraw() + draw_label("mRT distribution vs Design",
+    fontface = 'bold', size = 13) + theme(plot.margin = margin(0, 5, 10 ,0))
+
+plot_row = plot_grid(violinmRTParadigm + theme(plot.margin = margin(0, 30, 0, 0)),
+  violinmRTSession + theme(plot.margin = margin(0, 10, 0, 0)), nrow=1)
+          
+# jpeg("ViolinmRTParadigmSession.jpg", width = 5000, height = 2500, units = "px",res=600)
+  plot_grid(title, plot_row, ncol = 1, rel_heights = c(0.1, 1))
+# dev.off()
+  
+# jpeg("ViolinmRTSession.jpg", width = 2500, height = 2500, units = "px",res=600)
+violinmRTSession
+# dev.off()
+  
+# jpeg("ViolinmRTParadigm.jpg", width = 2500, height = 2500, units = "px",res=600)
+violinmRTParadigm
+# dev.off()
+
+
+```
+
+
+
+
+
+
+
+
+# RELATIVE DURATION ESTIMATION MODELS
+
+
+
+
+
+
+## Mixed-effect models rDE
+```{r}
+data <- Nback_blocks  #15677
+
+M1 <-lmer(relative_timing ~ duration + (1|PID), data=data, REML=FALSE)
+
+M2 <-lmer(relative_timing ~ duration + nback + (1|PID), data=data, REML=FALSE)
+lrtest(M1, M2) #M1 nested #M2 more complex   p <0.05***  #the complex model is significantly more accurate
+
+M3 <-lmer(relative_timing ~ duration + nback + ILI + (1|PID), data=data, REML=FALSE)
+lrtest(M2, M3) #M2 nested #M3 more complex  p > 0.05  #the complex model is not significantly more accurate
+
+M4 <-lmer(relative_timing ~ duration + nback + ILI:nback + (1|PID), data=data, REML=FALSE)
+lrtest(M2, M4)   #M2 nested #M4 more complex      p <0.05*  #the complex model is significantly more accurate (no interaction between ILI and other factors were found)
+
+M5 <-lmer(relative_timing ~ duration + nback +  ILI:nback + dprime + (1|PID), data=data, REML=FALSE)
+lrtest(M4, M5)  #M4 nested #5 more complex    p < 0.05***  #the complex model is significantly more accurate    
+
+
+compare_performance(M1,M2,M3,M4,M5, M6, M7, M8)
+
+
+M6 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + (1|PID), data=data, REML=FALSE)
+lrtest(M5, M6)   #M5 nested #6 more complex   p < 0.05*  #the complex model is  not significantly more accurate
+
+
+
+M7 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + Session + (1|PID), data=data, REML=FALSE)
+lrtest(M6, M7)   #M6 nested #7 more complex   p < 0.05*** #the complex model is significantly more accurate
+
+
+
+M8 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + Session + paradigm + (1|PID), data=data, REML=FALSE)
+lrtest(M7, M8)   #M7 nested #8 more complex   p > 0.05  #the complex model is not significantly more accurate
+
+
+M9 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + Session + paradigm:duration + (1|PID), data=data, REML=FALSE)
+lrtest(M7, M9)   #M4 nested #7 more complex    p < 0.05*** #the complex model is significantly more accurate, supplementary interactions between paradigm and other factors were not found
+
+
+M10 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + Session + paradigm:duration + dprime:logbeta + (1|PID), data=data, REML=FALSE)
+lrtest(M9, M10)   #MÇ nested #10 more complex   p < 0.05**, no other interaction between logbeta and other factors
+
+M11 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + Session + paradigm:duration + dprime:logbeta + dprime:duration+ (1|PID), data=data, REML=FALSE)
+lrtest(M10, M11)   # p < 0.05*   but no interaction found between WM Load and duration
+
+M12 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + Session + paradigm:duration + dprime:duration + dprime:logbeta + dprime:nback +(1|PID), data=data, REML=FALSE)
+lrtest(M11, M12)   # p < 0.05** no interaction between dprime and Paradigm, session or ILI
+
+^
+
+
+#Testing multicollinearity (without the interaction terms that could inflate the variance inflation factor (the VIF)
+
+M12b <- lmer(relative_timing ~ duration + nback + ILI + dprime + logbeta + Session +(1|PID), data=data, REML=FALSE)
+check_collinearity(M12b) #OK, low correlation
+
+
+
+#Testing random effects
+
+M13 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + Session + paradigm:duration + dprime:duration + dprime:logbeta + dprime:nback + (nback|PID), data=data, REML=FALSE)
+lrtest(M12, M13)   # p < 0.05**
+
+M14 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + Session + paradigm:duration + dprime:duration + dprime:logbeta + dprime:nback + 
+             (nback + paradigm|PID), data=data, REML=FALSE)
+lrtest(M13, M14)   # p < 0.05***    ILI, Session and were not significant and the fit was singular
+
+#add ILI, duration, d' or logbeta as a random effect slope yields in "boundary singular error" or the model failed to converge
+#Moreover, it explained only a very small part of the variance
+
+
+compare_performance(M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14) #M14 best AIC
+
+
+summary(M1)
+summary(M2)
+summary(M3)
+summary(M4)
+summary(M5)
+summary(M6)
+summary(M7)
+summary(M8)
+summary(M9) 
+summary(M10)
+summary(M11)
+summary(M12)
+summary(M13) 
+summary(M14) #Best !
+```
+
+
+#Main effects
+```{r}
+library("stargazer")
+
+M14 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + Session + paradigm:duration + dprime:duration + dprime:logbeta + dprime:nback + 
+             (nback + paradigm|PID), data=data, REML=T)
+
+summary(M14)
+stargazer(M14, type = "text",
+           title = "Regression results M14",
+          header = FALSE,
+          single.row = TRUE,
+          digits = 3,
+          star.cutoffs = c(0.05, 0.01, 0.001),
+          digit.separator = "")
+
+
+
+# -- Main effect of Session --   => Significant effect
+emmeans(M14, ~ Session, lmer.df = "satterthwaite") 
+
+# -- Interaction effect of duration x Paradigm --   => Significant effect
+
+emmeans(M14, pairwise ~ paradigm | duration,  lmer.df = "satterthwaite")  
+
+# -- Main effect of duration --   => Significant effect
+emmeans(M14, ~ duration) 
+
+# -- Main effect of WM Load --    => no Significant effect
+emmeans(M14, ~ nback,  lmer.df = "satterthwaite") 
+
+# -- Main effect of dprime --    => no Significant effect
+emmeans(M14,  ~ dprime, at = list(dprime = c(0.01, 1, 2, 3, 4,5)))
+
+# -- Main effect of Interaction duration / nback 
+
+emmeans(M14, pairwise ~ duration | dprime,  at = list(dprime = c(0.01, 1, 2, 3, 4,5)), lmer.df = "satterthwaite")
+
+emmeans(M14, pairwise ~ nback | ILI,  lmer.df = "satterthwaite")  
+
+emmeans(M14, pairwise ~ dprime | nback, at = list(dprime = c(1, 2, 3, 4,5)))
+```
+
+
+# Verification of model assumptions ####
+```{r}
+
+R1 <- resid(M14)
+F1 <- fitted(M14)
+
+## residuals distribution : histogramme and shapiro test for normality
+hist(R1, breaks = 30)
+
+# shapiro.test(R1)
+
+## homogeneity : fitted values vs normalized residuals
+
+plot(x = F1, 
+     y = R1, 
+     xlab = "Fitted Values",
+     ylab = "Normalized residuals")
+abline(h = 0, lty = 2)
+
+#timing_error
+plot(x = data$relative_timing, 
+     y = R1, 
+     xlab = "relative_timing",
+     ylab = "Normalized residuals")
+abline(h = 0, lty = 2)
+
+
+## independance : residuals vs each model covariable
+
+# duration
+boxplot(R1 ~ duration,   
+        ylab = "Normalized residuals",
+        data = data, xlab = "task duration")
+abline(h = 0, lty = 2)
+
+# nback
+boxplot(R1 ~ nback,   
+        ylab = "Normalized residuals",
+        data = data, xlab = "nback")
+abline(h = 0, lty = 2)
+
+
+
+# data %>%
+#  ggplot(aes(timing_error, R1, colour = dprime)) + 
+#            geom_point() +
+#       # geom_density(aes(y = ..density..*(500 * 0.02)), alpha=.4, fill="lightgreen") +
+#   labs(y = "residuals", x = "timing_error", title ="model for 1-back retrospective tasks, residuals vs TE") + 
+#   theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
+#   # scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1),
+#   #                limits = c(-0.01,1.01))
+
+
+
+check_heteroscedasticity(M14) #not OK, but graphically OK:
+plot(M14)
+
+check_autocorrelation(M14)
+durbinWatsonTest(resid(M14)) # =~ 2 (1.6) no autocorrelation
+
+
+```
+##Session effect on Relative Duration Estimation - Visualization
+```{r}
+jpeg("violinSessionrDEPro.jpg", width = 2500, height = 2500, units = "px",res=600)
+
+Nback_blocks %>% 
+   ggplot(aes(y = relative_timing, x = Session, colour = Session)) + 
+  geom_violin(outlier.shape=NA) +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+  geom_hline(aes(yintercept = 1), colour = 'black', size = .3, linetype = "dashed") +
+  scale_y_continuous(breaks = seq(from = 0, to = 2.5, by = 0.5),
+                     limits = c(0, 2.7)) +
+  stat_summary(fun = mean)  +
+   theme_classic() +  
+  labs(y = "rDE", x ="Session") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.3)) +
+  theme( legend.position="none",
+          axis.text = element_text(size = 11), 
+ axis.title = element_text(size = 12)) +
+  scale_colour_manual(values = cbPalette2_v2) +
+ stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", 
+                    label.y = 2.55, comparison = list(c("SC", "S1")))
+dev.off()
+
+
+```
+
+
+
+##Interaction effect ParadigmxDuration on rDE - Visualization
+```{r}
+
+
+   
+  violinrDEdurationParadigm<- Nback_blocks %>% 
+    mutate(paradigmduration = paste(paradigm, duration),
+           paradigmduration =  fct_relevel(paradigmduration, "retrospective 45s", "prospective 45s", "retrospective 90s", "prospective 90s")) %>%
+  ggplot(aes(paradigmduration, relative_timing, colour = paradigmduration)) +
+  geom_violin(outlier.shape=NA) +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+  geom_hline(aes(yintercept = 1), colour = 'black', size = 0.3, linetype = "dashed") +
+stat_summary(fun = mean)  +
+      # facet_grid(ILI~.) +
+  theme_classic() +
+  labs(y = "rDE", x = "Paradigm : Task Duration", title = "rDE for different Parradigm and Task Duration") +
+  theme( legend.position="none",
+        axis.title.x = element_text(size = 12),
+         axis.title.y = element_text(size = 12),
+        axis.text = element_text(size = 12),
+  plot.title = element_text("hjust" = 0.5), axis.title= element_text(size = 13)) + 
+  scale_colour_manual(values = cbPalette4) +
+   stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", comparisons = list(c("retrospective 45s", "prospective 45s"), c("retrospective 90s", "prospective 90s"))) 
+   
+     
+
+# jpeg("violinrDEdurationParadigm", width = 5000, height = 3500, units = "px",res=600)
+   violinrDEdurationParadigm
+# dev.off()
+```
+
+##Subjective vs Objective Duration 
+```{r}
+##Duration graphs without ILI
+
+DD <- Nback_blocks %>%
+   group_by(Session) %>%
+  group_by(nback, .add =T) %>% 
+  group_by(duration, .add = T) %>% 
+  summarize(DD = mean(relative_timing), 
+            semDD = sem(relative_timing))
+
+
+DD2 <- Nback_blocks %>%
+   group_by(Session) %>%
+  group_by(duration, .add = T) %>% 
+  summarize(DD = mean(relative_timing), 
+            semDD = sem(relative_timing))
+
+DD_vs_ODL1 <- DD2 %>%
+  ggplot (aes(x = Session,
+                 y = DD,
+                group = duration,
+                colour = duration)) +
+  scale_y_continuous(breaks = seq(from = -35, to = 5, by = 5),
+                     limits = c(-35, 5)) +
+  geom_hline(aes(yintercept = 0), 
+             colour = 'black', 
+             size = .5, 
+             linetype = "dashed") +
+  geom_point(size = 2) +
+  geom_line(aes(group = duration), size = 1) +
+  theme_classic() +
+  labs(y = "Subjective Duration Deviation (s)", 
+       x = "Session",
+       title = "DD vs task Duration for different sessions") +
+  theme( legend.text = element_text(size = 11),
+         legend.title  = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  legend.position = c(.9, .5),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  geom_errorbar(aes(ymin = DD - semDD, ymax = DD + semDD),
+                colour = "black",
+                width = .05) +
+  scale_colour_manual(name = "Task Duration", values = cbPalette2, labels = c("45s", "90s")) 
+
+
+# jpeg("DDNbackLleg.jpg", width = 4000, height = 2500, units = "px",res=600)
+DD_vs_ODL1
+# dev.off()
+
+DD_vs_ODL2 <- DD %>%
+  ggplot (aes(x = session,
+                 y = DD,
+                group = duration,
+                colour = duration)) +
+  scale_y_continuous(breaks = seq(from = -35, to = 5, by = 5),
+                     limits = c(-35, 5)) +
+  geom_hline(aes(yintercept = 0), 
+             colour = 'black', 
+             size = .5, 
+             linetype = "dashed") +
+  geom_point(size = 2) +
+  geom_line(aes(group = duration), size = 1) +
+  theme_classic() +
+  labs(y = "Subjective Duration Deviation (s)", 
+       x = "Session",
+       title = "DD vs task Duration for different sessions and WM load") +
+  theme( legend.text = element_text(size = 11),
+         legend.title  = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  legend.position = c(.5, .5),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  geom_errorbar(aes(ymin = DD - semDD, ymax = DD + semDD),
+                colour = "black",
+                width = .05) +
+  scale_colour_manual(name = "Task Duration", values = cbPalette4, labels = c("45s", "90s")) +
+  facet_grid(.~nback)
+  
+
+# jpeg("DDNbackLleg.jpg", width = 4000, height = 2500, units = "px",res=600)
+# DD_vs_ODL2
+# dev.off()
+
+
+
+DD_vs_ODL3 <- DD %>%
+  ggplot (aes(x = nback,
+                 y = DD,
+                group = session,
+                colour = session)) +
+  scale_y_continuous(breaks = seq(from = -35, to = 5, by = 5),
+                     limits = c(-35, 5)) +
+  geom_hline(aes(yintercept = 0), 
+             colour = 'black', 
+             size = .5, 
+             linetype = "dashed") +
+  geom_point(size = 2) +
+  geom_line(aes(group = session), size = 1) +
+  theme_classic() +
+  labs(y = "Subjective Duration Deviation (s)", 
+       x = "WM load",
+       title = "DD vs task Duration for different sessions and WM load") +
+  theme( legend.text = element_text(size = 11),
+         legend.title  = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  legend.position = c(.50, .5),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  geom_errorbar(aes(ymin = DD - semDD, ymax = DD + semDD),
+                colour = "black",
+                width = .05) +
+  scale_colour_manual(name = "Session", values = cbPalette4, labels = c("S1", "S3")) +
+  facet_grid(.~duration)
+  
+
+
+
+# jpeg("DDNbackLleg.jpg", width = 4000, height = 2500, units = "px",res=600)
+DD_vs_ODL3
+# dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#PASSAGE OF TIME JUDGMENT (PoTJ)
+
+
+
+
+
+##PoTJ tables - % respondant for each likert answer
+```{r}
+Likert_paradigm <- Nback_blocks %>%
+   filter(!is.na(likert)) %>%
+  mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly")) %>%
+	group_by(paradigm, likert) %>%  # grouping by these two variables
+	tally() %>%  # counting the number of responses
+	mutate(perc = n / sum(n) * 100) %>%
+	dplyr::select(-n) %>%
+	group_by(paradigm) %>%
+	spread(likert, perc) %>% 
+  rename(design = paradigm)
+   
+Likert_session <- Nback_blocks %>%
+   filter(!is.na(likert)) %>%
+  mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly")) %>%
+	group_by(Session, likert) %>%  # grouping by these two variables
+	tally() %>%  # counting the number of responses
+	mutate(perc = n / sum(n) * 100) %>%
+	dplyr::select(-n) %>%
+	group_by(Session) %>%
+	spread(likert, perc) %>% 
+  rename(design = Session) 
+
+# %>% 
+  # mutate(design = fct_recode(design, "1500ms" = "1500", "1800ms" = "1800"))
+
+   
+
+Likert_all <- bind_rows(Likert_paradigm, Likert_session)
+  
+paged_table(Likert_all)  
+```
+
+
+
+
+
+##PoTJ VS Session and Paradigm - All together
+```{r}
+#PoTJ vs ALL
+likert_hi_lo <- Likert_all %>%
+	mutate(midlow = Normally / 2,
+		midhigh = Normally / 2) %>%
+	dplyr::select(design, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
+	gather(key = response, value = perc, 2:7) 
+	colnames <- (c("duration", "response", "perc"))
+
+
+likert_lo <- likert_hi_lo %>%
+	filter(response %in% c( "midlow", "Slowly", "Very Slowly")) %>%
+	mutate(response = factor(response, levels = c("Very Slowly", "Slowly", "midlow")))
+
+likert_hi <- likert_hi_lo %>%
+	filter(response %in% c( "Very Quickly", "Quickly", "midhigh")) %>%
+	mutate(response = factor(response, levels = c("Very Quickly", "Quickly", "midhigh")))
+
+
+# Use RColorBrewer to store a preset diverging colour palette as a vector of colour codes 
+legend_pal <- brewer.pal(name = "RdBu", n = 5)
+
+# Duplicate the middle value, remember that "Sometimes" is actually two groups, "midhigh" and "midlow"
+legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
+
+# Replace the ugly white colour for "Sometimes" with a pleasant dishwater grey
+legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
+
+names(legend_pal) <- c("Very Quickly", "Quickly","midhigh", "midlow", "Slowly", "Very Slowly" )
+
+# jpeg("ParadigmSessionLikert1.jpg", width = 5000, height = 2500, units = "px",res=600)
+ggplot() + 
+	geom_bar(data = likert_hi, aes(x = design, y=perc, fill = response), stat="identity", width = 0.5) +
+	geom_bar(data = likert_lo, aes(x = design, y=-perc, fill = response), stat="identity", width = 0.5) + 
+	geom_hline(yintercept = 0, color =c("black")) + 
+	scale_fill_manual(values = legend_pal, 
+	                  name = "In the last round,\nthe time seemed \nto have passed:",
+		breaks = c("Very Quickly", "Quickly", "midhigh", "Slowly", "Very Slowly" ),
+		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
+	coord_flip() + 
+	labs(x = "Paradigm                           Session", y = "Percentage of respondents (%)", title = "Diverging stacked bar of likert scale PoTJ for different durations") +
+  scale_y_continuous(breaks = seq(from = -60, to = 70, 10),
+                     limits = c(-60,70)) +
+	theme_classic()
+# dev.off()
+```
+
+
+
+##PoTJ VS Session & paradigm diverging stacked bar
+```{r}
+#PoTJ vs Session
+likert_hi_lo <- Likert_paradigm %>%
+	mutate(midlow = Normally / 2,
+		midhigh = Normally / 2) %>%
+	dplyr::select(design, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
+	gather(key = response, value = perc, 2:7) 
+	colnames <- (c("paradigm", "response", "perc"))
+
+
+likert_lo <- likert_hi_lo %>%
+	filter(response %in% c( "midlow", "Slowly", "Very Slowly")) %>%
+	mutate(response = factor(response, levels = c("Very Slowly", "Slowly", "midlow")))
+
+likert_hi <- likert_hi_lo %>%
+	filter(response %in% c( "Very Quickly", "Quickly", "midhigh")) %>%
+	mutate(response = factor(response, levels = c("Very Quickly", "Quickly", "midhigh")))
+
+legend_pal <- brewer.pal(name = "RdBu", n = 5)
+
+legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
+
+legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
+
+names(legend_pal) <- c("Very Quickly", "Quickly","midhigh", "midlow", "Slowly", "Very Slowly" )
+
+POTJParadigm  <- ggplot() + 
+	geom_bar(data = likert_hi, aes(x = design, y=perc, fill = response), stat="identity", width = 0.5) +
+	geom_bar(data = likert_lo, aes(x = design, y=-perc, fill = response), stat="identity", width = 0.5) + 
+	geom_hline(yintercept = 0, color =c("black")) + 
+	scale_fill_manual(values = legend_pal, 
+		breaks = c("Very Quickly", "Quickly", "midhigh", "Slowly", "Very Slowly" ),
+		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
+	coord_flip() + 
+	labs(x = "Paradigm", y = "Percentage of respondents (%)") +
+ scale_y_continuous(breaks = seq(from = -60, to = 80, 20),
+                     limits = c(-60,80)) +
+	theme_classic()
+	
+	
+
+	
+	
+
+
+#PoTJ vs Session
+	likert_hi_lo <- Likert_session %>%
+	mutate(midlow = Normally / 2,
+		midhigh = Normally / 2) %>%
+	dplyr::select(design, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
+	gather(key = response, value = perc, 2:7) 
+	colnames <- (c("session", "response", "perc"))
+
+
+likert_lo <- likert_hi_lo %>%
+	filter(response %in% c( "midlow", "Slowly", "Very Slowly")) %>%
+	mutate(response = factor(response, levels = c("Very Slowly", "Slowly", "midlow")))
+
+likert_hi <- likert_hi_lo %>%
+	filter(response %in% c( "Very Quickly", "Quickly", "midhigh")) %>%
+	mutate(response = factor(response, levels = c("Very Quickly", "Quickly", "midhigh")))
+
+legend_pal <- brewer.pal(name = "RdBu", n = 5)
+
+legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
+
+legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
+
+names(legend_pal) <- c("Very Quickly", "Quickly","midhigh", "midlow", "Slowly", "Very Slowly" )
+
+POTJSession  <- ggplot() + 
+	geom_bar(data = likert_hi, aes(x = design, y=perc, fill = response), stat="identity", width = 0.5) +
+	geom_bar(data = likert_lo, aes(x = design, y=-perc, fill = response), stat="identity", width = 0.5) + 
+	geom_hline(yintercept = 0, color =c("black")) + 
+	scale_fill_manual(values = legend_pal, 
+		breaks = c("Very Quickly", "Quickly", "midhigh", "Slowly", "Very Slowly" ),
+		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
+	coord_flip() + 
+	labs(x = "Session", y = "Percentage of respondents (%)") +
+  scale_y_continuous(breaks = seq(from = -60, to = 60, 20),
+                     limits = c(-60,60)) +
+	theme_classic()
+	
+
+POTJSession <- POTJSession + theme(legend.position = "none")
+POTJParadigm <- POTJParadigm + theme(legend.position = "none")
+
+
+#Merge the three graphs
+
+          
+# jpeg("ParadigmSessionLikert2", width = 4000, height = 2500, units = "px",res=600)
+  plot_grid( POTJParadigm, POTJSession, nrow = 2)
+  # dev.off()
+```
+
+##Bias X PoTJ violin plot 2
+```{r}
+
+Nback_blocks <- Nback_blocks %>%
+  mutate(relative_timing = estimate / parse_number(as.character(duration)),
+         likert2 = ifelse(likert == "Very Slowly" | likert == "Slowly", "Slowly", as.character(likert)),
+         likert2 = ifelse(likert == "Very Quickly" | likert == "Quickly", "Quickly", as.character(likert2)),
+         likert2 = fct_relevel(likert2, c("Slowly", "Normally", "Quickly")))
+
+
+my_xlab <- paste(levels(Nback_blocks$likert2),"\n(N=",table(Nback_blocks$likert2),")", sep="")
+my_comparison = list( c("Slowly", "Normally"), c("Normally", "Quickly"), c("Slowly", "Quickly"))
+
+
+violin_likert <- Nback_blocks %>% 
+  filter( !is.na(likert2)) %>%
+   ggplot(aes(y = relative_timing, x = likert2, fill = likert2)) + 
+  geom_violin(varwidth = TRUE, width= 1, outlier.size = 0.1) +
+  geom_hline(aes(yintercept = 1), colour = 'black', size = .5, linetype = "dashed") +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+  scale_x_discrete(labels = my_xlab) +
+  scale_y_continuous(breaks = seq(from = 0, to = 3, by = .5),
+                     limits = c(0, 3)) +
+  stat_summary(fun = mean)  +
+  scale_fill_viridis(discrete = TRUE, alpha=0.3, name = "In the last round,\nthe time seemed \nto have passed:",
+		labels = c("Slowly", "Normally", "Quickly")) +
+   theme_classic() +  
+  labs(y = "Relative Timing", x ="PoTJ", title = "Relative Timing vs Passage of Time Judgment") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.3)) +
+  theme( legend.text = element_text(size = 10),
+          axis.text = element_text(size = 11), 
+ axis.title = element_text(size = 12)) +
+ stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", 
+                    label.y = c(2.7,2.8,3), comparison = my_comparison)
+
+
+
+# jpeg("ViolinLikertproS1", width = 3000, height = 2500, units = "px",res=600)
+ violin_likert
+  # dev.off()
+```
+
+
+
+
+#Passing of time statistic models
+```{r}
+
+data <- Nback_blocks  %>%
+  filter(!is.na(likert)) #15620 obs
+
+library(MASS)
+
+m1 = clmm(likert ~ duration + (1|PID), data, Hess=T, nAGQ= 7)
+
+m2 = clmm(likert ~ duration + nback + (1|PID), data, Hess=T, nAGQ= 7)
+lrtest(m1,m2)  # p < 0.05*** m2 is significantly better than m1
+
+m3 = clmm(likert ~ duration + ILI + nback + (1|PID), data, Hess=T, nAGQ= 7)
+lrtest(m2,m3) #p < 0.05***
+
+m4 = clmm(likert ~ duration + ILI + nback + dprime + (1|PID), data, Hess=T, nAGQ= 7)
+lrtest(m3,m4) #p > 0.05 m4 best likelihood and AIC
+
+m5 = clmm(likert ~ duration + ILI + dprime + (1|PID), data, Hess=T, nAGQ= 7)
+lrtest(m5,m3) #p < 0.05***
+lrtest(m3,m5) #p < 0.05*** comparable likelihood ratio, but M3 better AIC than m5
+
+m6 = clmm(likert ~ duration + ILI + nback + logbeta + (1|PID), data, Hess=T, nAGQ= 7)
+lrtest(m3,m6) #p > 0.05
+
+m7 = clmm(likert ~ duration + ILI + nback + logbeta + Session + (1|PID), data, Hess=T, nAGQ= 7)
+lrtest(m6,m7)  #p < 0.05** m4 best likelihood and AIC
+
+m8 = clmm(likert ~  duration + ILI + nback + logbeta + paradigm + (1|PID), data, Hess=T, nAGQ= 7)
+lrtest(m6,m8)  # p > 0.05***
+
+m9 = clmm(likert ~ duration + ILI + nback + logbeta + paradigm + Session:paradigm + (1|PID), data, Hess=T, nAGQ= 7)
+lrtest(m8,m9) # p > 0.05 
+
+m10 = clmm(likert ~ duration + ILI + nback + logbeta + paradigm + Session:duration + (1|PID), data, Hess=T, nAGQ= 7)
+lrtest(m8,m10) # p < 0.05
+
+m11 = clmm(likert ~ duration + ILI + nback + logbeta + paradigm + Session:duration + Session:nback + (1|PID), data, Hess=T, nAGQ= 7)
+lrtest(m10,m11) # p < 0.05*  no interaction between Session and ILI, dprime,logbeta
+
+m12 = clmm(likert ~ duration + ILI + nback + logbeta + paradigm + Session:duration + Session:nback + paradigm:duration + (1|PID), data, Hess=T, nAGQ= 7)
+lrtest(m11,m12) # p < 0.05** no interaction between paradigm and nback, ILI, dprime, or logbeta
+
+m13 = clmm(likert ~ duration + ILI + nback + logbeta + paradigm + Session:duration + Session:nback + paradigm:duration + nback:duration + (1|PID), data, Hess=T, nAGQ= 7)
+lrtest(m12,m13) # p > 0.05 m13 not better than m12
+
+m14 = clmm(likert ~ duration + ILI + nback + logbeta + paradigm + Session:duration + Session:nback + paradigm:duration + nback:duration + dprime:duration + (1|PID), data, Hess=T, nAGQ= 7)
+lrtest(m12,m14) # p > 0.05 m14 not better than m12
+
+
+compare_performance(m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14) #m12, m13, m14 best AIC
+
+
+
+summary(m1)
+summary(m2)
+summary(m3)
+summary(m4)
+summary(m5)
+summary(m6) 
+summary(m7)
+summary(m8)
+summary(m9)  
+summary(m10) 
+summary(m11)
+summary(m12) #best model
+summary(m13)
+summary(m14)
+
+#to verify without mixed model
+m12b <- polr(likert ~ duration + ILI + nback + logbeta + paradigm + Session:duration + Session:nback + paradigm:duration, data, Hess=T)
+summary(m12b)
+
+coeffs <- coef(summary(m12))
+p <- pnorm(abs(coeffs[, "z value"]), lower.tail = FALSE) * 2
+cbind(coeffs, "p value" = round(p,3)) #get the p-value for each effect
+
+exp(cbind(OR = coef(m12), ci = confint(m12))) #logit effects are difficult to interpret --> exp() to have % change
+
+#cclm assumptions
+
+
+#collinearity
+check_collinearity(m12) #ok, moderate correlation
+
+
+
+##Proportional odds assumption
+require(Hmisc)
+
+sf <- function(y) {
+  c(
+    'Y>=1' = qlogis(mean(y >= 1)),
+    'Y>= 2' = qlogis(mean(y >= 2)),
+    'Y>= 3' = qlogis(mean(y >= 3)),
+    'Y>= 4' = qlogis(mean(y >= 4)),
+    'Y>=5' = qlogis(mean(y >= 5)))
+}
+
+s <- with(data, summary(as.numeric(likert) ~ duration + ILI + nback + logbeta + paradigm + Session:duration + Session:nback + paradigm:duration, fun=sf))
+s
+
+s[, 6] <- s[, 6] - s[, 3]
+s[, 5] <- s[, 5] - s[, 3]
+s[, 4] <- s[, 4] - s[, 3]
+s[, 3] <- s[, 3] - s[, 3]
+s
+
+plot(s, which=1:5, pch=1:5, xlab='logit', main=' ', xlim=range(s[,3:6]))
+
+
+```
+
+
+
+
+
+##PoTJ tables - % respondant for each likert answer Session x Duration
+```{r}
+Likert_SessionDuration <- Nback_blocks %>%
+   filter(!is.na(likert)) %>%
+  mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly")) %>%
+	group_by(Session, duration, likert) %>%  # grouping by these two variables
+	tally() %>%  # counting the number of responses
+	mutate(perc = n / sum(n) * 100) %>%
+	dplyr::select(-n) %>%
+	group_by(Session, duration) %>%
+	spread(likert, perc) %>% 
+  mutate(design = paste(Session,duration)) %>%
+  ungroup() %>%
+  dplyr::select(-duration, -Session)
+
+Likert_SessionDuration
+
+likert_hi_lo <- Likert_SessionDuration %>%
+	mutate(midlow = Normally / 2,
+		midhigh = Normally / 2) %>%
+	dplyr::select(design, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
+	gather(key = response, value = perc, 2:7) 
+	colnames <- (c("design", "response", "perc"))
+
+
+likert_lo <- likert_hi_lo %>%
+	filter(response %in% c( "midlow", "Slowly", "Very Slowly")) %>%
+	mutate(response = factor(response, levels = c("Very Slowly", "Slowly", "midlow")))
+
+likert_hi <- likert_hi_lo %>%
+	filter(response %in% c( "Very Quickly", "Quickly", "midhigh")) %>%
+	mutate(response = factor(response, levels = c("Very Quickly", "Quickly", "midhigh")))
+
+
+# Use RColorBrewer to store a preset diverging colour palette as a vector of colour codes 
+legend_pal <- brewer.pal(name = "RdBu", n = 5)
+
+# Duplicate the middle value, remember that "Sometimes" is actually two groups, "midhigh" and "midlow"
+legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
+
+# Replace the ugly white colour for "Sometimes" with a pleasant dishwater grey
+legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
+
+names(legend_pal) <- c("Very Quickly", "Quickly","midhigh", "midlow", "Slowly", "Very Slowly" )
+
+# jpeg("PotSessionDuration.jpg", width = 5000, height = 2500, units = "px",res=600)
+ggplot() + 
+	geom_bar(data = likert_hi, aes(x = design, y=perc, fill = response), stat="identity", width = 0.5) +
+	geom_bar(data = likert_lo, aes(x = design, y=-perc, fill = response), stat="identity", width = 0.5) + 
+	geom_hline(yintercept = 0, color =c("black")) + 
+	scale_fill_manual(values = legend_pal, 
+	                  name = "In the last round,\nthe time seemed \nto have passed:",
+		breaks = c("Very Quickly", "Quickly", "midhigh", "Slowly", "Very Slowly" ),
+		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
+	coord_flip() + 
+	labs(x = "Session:Duration", y = "Percentage of respondents (%)", title = "Diverging stacked bar of likert scale PoTJ for different conditions") +
+  scale_y_continuous(breaks = seq(from = -60, to = 70, 10),
+                     limits = c(-65,70)) +
+	theme_classic()
+# dev.off()
+   
+
+```
+##PoTJ tables - % respondant for each likert answer Session x WM Load
+```{r}
+Likert_SessionWMLoad <- Nback_blocks %>%
+   filter(!is.na(likert)) %>%
+  mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly")) %>%
+	group_by(Session, nback, likert) %>%  # grouping by these two variables
+	tally() %>%  # counting the number of responses
+	mutate(perc = n / sum(n) * 100) %>%
+	dplyr::select(-n) %>%
+	group_by(Session, nback) %>%
+	spread(likert, perc) %>% 
+  mutate(design = paste(Session,nback)) %>%
+  ungroup() %>%
+  dplyr::select(-nback, -Session)
+
+Likert_SessionWMLoad
+
+likert_hi_lo <- Likert_SessionWMLoad %>%
+	mutate(midlow = Normally / 2,
+		midhigh = Normally / 2) %>%
+	dplyr::select(design, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
+	gather(key = response, value = perc, 2:7) 
+	colnames <- (c("design", "response", "perc"))
+
+
+likert_lo <- likert_hi_lo %>%
+	filter(response %in% c( "midlow", "Slowly", "Very Slowly")) %>%
+	mutate(response = factor(response, levels = c("Very Slowly", "Slowly", "midlow")))
+
+likert_hi <- likert_hi_lo %>%
+	filter(response %in% c( "Very Quickly", "Quickly", "midhigh")) %>%
+	mutate(response = factor(response, levels = c("Very Quickly", "Quickly", "midhigh")))
+
+
+# Use RColorBrewer to store a preset diverging colour palette as a vector of colour codes 
+legend_pal <- brewer.pal(name = "RdBu", n = 5)
+
+# Duplicate the middle value, remember that "Sometimes" is actually two groups, "midhigh" and "midlow"
+legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
+
+# Replace the ugly white colour for "Sometimes" with a pleasant dishwater grey
+legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
+
+names(legend_pal) <- c("Very Quickly", "Quickly","midhigh", "midlow", "Slowly", "Very Slowly" )
+
+# jpeg("PotSessionWMLoad.jpg", width = 5000, height = 2500, units = "px",res=600)
+ggplot() + 
+	geom_bar(data = likert_hi, aes(x = design, y=perc, fill = response), stat="identity", width = 0.5) +
+	geom_bar(data = likert_lo, aes(x = design, y=-perc, fill = response), stat="identity", width = 0.5) + 
+	geom_hline(yintercept = 0, color =c("black")) + 
+	scale_fill_manual(values = legend_pal, 
+	                  name = "In the last round,\nthe time seemed \nto have passed:",
+		breaks = c("Very Quickly", "Quickly", "midhigh", "Slowly", "Very Slowly" ),
+		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
+	coord_flip() + 
+	labs(x = "Session:WMLoad", y = "Percentage of respondents (%)", title = "Diverging stacked bar of likert scale PoTJ for different conditions") +
+  scale_y_continuous(breaks = seq(from = -60, to = 70, 10),
+                     limits = c(-65,70)) +
+	theme_classic()
+# dev.off()
+   
+
+```
+
+
+
+##d' X PoTJ violin plot
+```{r}
+my_xlab <- paste(levels(Nback_blocks$likert),"\n(N=",table(Nback_blocks$likert),")", sep="")
+my_comparison = list( c("Very Slowly", "Normally"), c("Normally", "Very Quickly"), c("Very Slowly", "Very Quickly"))
+
+# jpeg("PoTJDJpro", width = 3000, height = 2500, units = "px",res=600)
+Nback_blocks %>% 
+  filter( !is.na(likert)) %>%
+   ggplot(aes(y = dprime, x = likert, fill = likert)) + 
+  geom_violin(varwidth = TRUE, width= 1, outlier.size = 0.1) +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+  scale_x_discrete(labels = my_xlab) +
+  # scale_y_continuous(breaks = seq(from = 0, to = 3, by = .5),
+                     # limits = c(0, 3)) +
+  stat_summary(fun = mean)  +
+  scale_fill_viridis(discrete = TRUE, alpha=0.3, name = "In the last round,\nthe time seemed \nto have passed:",
+		labels = c("Very slowly", "Slowly", "Normally", "Quickly","Very quickly"  )) +
+   theme_classic() +  
+  labs(y = "d'", x ="PoTJ", title = "d' vs Passage of Time Judgment") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.3)) +
+  theme( legend.text = element_text(size = 10),
+          axis.text = element_text(size = 11), 
+ axis.title = element_text(size = 12),
+ legend.position ="None") 
+ # stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", 
+                    # label.y = c(2.6,2.55,2.8), comparison = my_comparison)
+# dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+##Relative Timing X PoTJ violin plot
+```{r}
+my_xlab <- paste(levels(Nback_blocks$likert),"\n(N=",table(Nback_blocks$likert),")", sep="")
+my_comparison = list( c("Very Slowly", "Normally"), c("Normally", "Very Quickly"), c("Very Slowly", "Very Quickly"))
+
+# jpeg("PoTJDJProS1", width = 3000, height = 2500, units = "px",res=600)
+Nback_blocks %>% 
+  filter( !is.na(likert)) %>%
+   ggplot(aes(y = relative_timing, x = likert, fill = likert)) + 
+  geom_violin(varwidth = TRUE, width= 1, outlier.size = 0.1) +
+  geom_hline(aes(yintercept = 1), colour = 'black', size = .5, linetype = "dashed") +
+  geom_boxplot(width=0.2, color="black", alpha=0.6, outlier.shape=NA) +
+  scale_x_discrete(labels = my_xlab) +
+  scale_y_continuous(breaks = seq(from = 0, to = 3, by = .5),
+                     limits = c(0, 3)) +
+  stat_summary(fun = mean)  +
+  scale_fill_viridis(discrete = TRUE, alpha=0.3, name = "In the last round,\nthe time seemed \nto have passed:",
+		labels = c("Very slowly", "Slowly", "Normally", "Quickly","Very quickly"  )) +
+   theme_classic() +  
+  labs(y = "rDE", x ="PoTJ", title = "Relative Duration Estimation vs Passage of Time Judgment") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.3)) +
+  theme( legend.text = element_text(size = 10),
+          axis.text = element_text(size = 11), 
+ axis.title = element_text(size = 12),
+ legend.position ="None") +
+ stat_compare_means(method = "wilcox.test", paired = FALSE, label = "p.format", 
+                    label.y = c(2.6,2.55,2.8), comparison = my_comparison)
+# dev.off()
+```
+
+
+
+
+#Break Relative timing in tertiles or quantiles
+```{r}
+
+
+#location of the cuts
+data <- data %>%
+  mutate( tertile = cut(relative_timing, breaks = unique(quantile(relative_timing,
+                                        probs=seq.int(0,1, by=1/3))), include.lowest=TRUE)) %>%
+  mutate(quantile = cut(relative_timing, breaks = unique(quantile(relative_timing,
+                                        probs=seq.int(0,1, by=1/5))), include.lowest=TRUE))
+
+summary(data)
+
+Nback_blocks <- data %>%
+  mutate(quantile = cut(relative_timing, breaks = unique(quantile(relative_timing,
+                                        probs=seq.int(0,1, by=1/5))), include.lowest=TRUE),
+  quantile = ifelse(quantile == "[0,0.444]", "1st     \n [0, 0.444]", as.character(quantile)),
+  quantile = ifelse(quantile == "(0.444,0.667]", "2nd     \n (0.444, 0.667]", as.character(quantile)),
+  quantile = ifelse(quantile == "(0.667,0.889]", "3rd     \n (0.667, 0.889]", as.character(quantile)),
+  quantile = ifelse(quantile == "(0.889,1.33]", "4th     \n (0.889, 1.33]", as.character(quantile)),
+  quantile = ifelse(quantile == "(1.33,2.67]", "5th     \n (1.33, 2.67]", as.character(quantile)),     
+  tertile = cut(relative_timing, breaks = unique(quantile(relative_timing,
+                                        probs=seq.int(0,1, by=1/3))), include.lowest=TRUE),
+  tertile = ifelse(tertile == "[0,0.667]", "1st     \n [0, 0.667]", as.character(tertile)),
+  tertile = ifelse(tertile == "(0.667,1]", "2nd     \n (0.667, 1]", as.character(tertile)),
+  tertile = ifelse(tertile == "(1,2.67]", "3rd     \n (1, 2.67]", as.character(tertile)))
+  
+  summary(Nback_blocks)
+
+Likert_quantile <- Nback_blocks %>%
+   filter(!is.na(likert)) %>%
+  mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly")) %>%
+	group_by(quantile, likert) %>%  # grouping by these two variables
+	tally() %>%  # counting the number of responses
+	mutate(perc = n / sum(n) * 100) %>%
+	dplyr::select(-n) %>%
+	group_by(quantile) %>%
+	spread(likert, perc) 
+
+Likert_quantile
+
+Likert_tertile <- Nback_blocks %>%
+   filter(!is.na(likert)) %>%
+  mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly")) %>%
+	group_by(tertile, likert) %>%  # grouping by these two variables
+	tally() %>%  # counting the number of responses
+	mutate(perc = n / sum(n) * 100) %>%
+	dplyr::select(-n) %>%
+	group_by(tertile) %>%
+	spread(likert, perc) 
+
+Likert_tertile
+```
+
+
+##PoTJ X Relative Timing - Diverging stacked bar 
+```{r}
+#PoTJ vs Relative Timing (Quantiles)
+likert_hi_lo <- Likert_quantile %>%
+	mutate(midlow = Normally / 2,
+		midhigh = Normally / 2) %>%
+	dplyr::select(quantile, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
+	gather(key = response, value = perc, 2:7) 
+	colnames <- (c("quantile", "response", "perc"))
+
+
+likert_lo <- likert_hi_lo %>%
+	filter(response %in% c( "midlow", "Slowly", "Very Slowly")) %>%
+	mutate(response = factor(response, levels = c("Very Slowly", "Slowly", "midlow")))
+
+likert_hi <- likert_hi_lo %>%
+	filter(response %in% c( "Very Quickly", "Quickly", "midhigh")) %>%
+	mutate(response = factor(response, levels = c("Very Quickly", "Quickly", "midhigh")))
+
+
+legend_pal <- brewer.pal(name = "RdBu", n = 5)
+
+legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
+
+legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
+
+names(legend_pal) <- c("Very Quickly", "Quickly","midhigh", "midlow", "Slowly", "Very Slowly" )
+
+# jpeg("BarslikertRelativeTiming1ProS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+ggplot() + 
+	geom_bar(data = likert_hi, aes(x = quantile, y=perc, fill = response), stat="identity", width = 0.5) +
+	geom_bar(data = likert_lo, aes(x = quantile, y=-perc, fill = response), stat="identity", width = 0.5) + 
+	geom_hline(yintercept = 0, color =c("black")) + 
+	scale_fill_manual(values = legend_pal, 
+	                  name = "In the last round,\nthe time seemed \nto have passed:",
+		breaks = c("Very Quickly", "Quickly", "midhigh", "Slowly", "Very Slowly" ),
+		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
+  labs(x = "rDE", y ="Percentage of Respondants (%)", title = "Relative Duration Estimation vs Passage of Time Judgment") +
+  coord_flip() + 
+  scale_y_continuous(breaks = seq(from = -70, to = 75, 60),
+                     limits = c(-75,60)) +
+	theme_classic()
+# dev.off()
+
+
+
+
+#PoTJ vs Relative Timing (tertiles)
+likert_hi_lo <- Likert_tertile %>%
+	mutate(midlow = Normally / 2,
+		midhigh = Normally / 2) %>%
+	dplyr::select(tertile, `Very Slowly`, Slowly, midlow, midhigh, Quickly, `Very Quickly`) %>%
+	gather(key = response, value = perc, 2:7) 
+	colnames <- (c("tertile", "response", "perc"))
+
+
+likert_lo <- likert_hi_lo %>%
+	filter(response %in% c( "midlow", "Slowly", "Very Slowly")) %>%
+	mutate(response = factor(response, levels = c("Very Slowly", "Slowly", "midlow")))
+
+likert_hi <- likert_hi_lo %>%
+	filter(response %in% c( "Very Quickly", "Quickly", "midhigh")) %>%
+	mutate(response = factor(response, levels = c("Very Quickly", "Quickly", "midhigh")))
+
+
+legend_pal <- brewer.pal(name = "RdBu", n = 5)
+
+legend_pal <- insert(legend_pal, ats = 3, legend_pal[3])
+
+legend_pal <- gsub("#F7F7F7", "#9C9C9C", legend_pal)
+
+names(legend_pal) <- c("Very Quickly", "Quickly","midhigh", "midlow", "Slowly", "Very Slowly" )
+
+# jpeg("BarslikertRelativeTiming2ProS1.jpg", width = 4000, height = 2500, units = "px",res=600)
+ggplot() + 
+	geom_bar(data = likert_hi, aes(x = tertile, y=perc, fill = response), stat="identity", width = 0.5) +
+	geom_bar(data = likert_lo, aes(x = tertile, y=-perc, fill = response), stat="identity", width = 0.5) + 
+	geom_hline(yintercept = 0, color =c("black")) + 
+	scale_fill_manual(values = legend_pal, 
+	                  name = "In the last round,\nthe time seemed \nto have passed:",
+		breaks = c("Very Quickly", "Quickly", "midhigh", "Slowly", "Very Slowly" ),
+		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
+  labs(x = "rDE", y ="Percentage of Respondants (%)", title = "Relative Duration Estimation vs Passage of Time Judgment") + 
+	coord_flip() + 
+  scale_y_continuous(breaks = seq(from = -70, to = 60, 10),
+                     limits = c(-70,60)) +
+	theme_classic()
+# dev.off()
+```
+
+
+
+
+
+#Ordinal Regression Model - Does rDE a good predictor of PoTJ - interaction with Session and paradigm ?
+```{r}
+
+#effect of relative Duration Estimation (rDE) on PoTJ likert scale
+
+data = Nback_blocks 
+
+library(MASS)
+
+mm1 = clmm(likert ~ relative_timing + (1|PID), lin = "logit", data, Hess=T, nAGQ= 7)
+
+
+mm2 = clmm(likert ~ relative_timing + relative_timing:Session + (1|PID), lin = "logit", data, Hess=T, nAGQ= 7)
+lrtest(mm1, mm2) #p > 0.05 no interaction effect between rDE and Session was found
+
+mm3 = clmm(likert ~ relative_timing + relative_timing:paradigm +(1|PID), lin = "logit", data, Hess=T, nAGQ= 7)
+lrtest(mm1, mm3) #p < 0.05*** Interaction between rDE and Session was found
+
+mm4 = clmm(likert ~ relative_timing * paradigm +(1|PID), lin = "logit", data, Hess=T, nAGQ= 7)
+lrtest(mm3, mm4)
+
+summary(mm3)
+
+emmeans(mm3, pairwise ~ paradigm + relative_timing , at = list(relative_timing = c(-0.33, 0.66, 1, 1.33, 1.66)))
+
+coeffs <- coef(summary(mm3))
+p <- pnorm(abs(coeffs[, "z value"]), lower.tail = FALSE) * 2
+cbind(coeffs, "p value" = round(p,3)) #get the p-value for each effect
+exp(cbind(OR = coef(mm3), ci = confint(mm3))) #logit effects are difficult to interpret --> exp() to have % change
+
+# newdat <- data.frame(nback =c(,1))
+# (phat <- predict(object = m, newdat, type="p"))
+
+
+
+
+##Proportional odds assumption
+require(Hmisc)
+
+sf <- function(y) {
+  c(
+    'Y>=1' = qlogis(mean(y >= 1)),
+    'Y>= 2' = qlogis(mean(y >= 2)),
+    'Y>= 3' = qlogis(mean(y >= 3)),
+    'Y>= 4' = qlogis(mean(y >= 4)),
+    'Y>=5' = qlogis(mean(y >= 5)))
+}
+
+s <- with(data, summary(as.numeric(likert) ~ relative_timing + relative_timing:paradigm, fun=sf))
+s
+
+s[, 6] <- s[, 6] - s[, 3]
+s[, 5] <- s[, 5] - s[, 3]
+s[, 4] <- s[, 4] - s[, 3]
+s[, 3] <- s[, 3] - s[, 3]
+s
+
+plot(s, which=1:5, pch=1:5, xlab='logit', main=' ', xlim=range(s[,3:6]))
+```
+
+
+

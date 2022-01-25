@@ -1,0 +1,547 @@
+---
+title: "Extracting Control Session"
+params: 
+  ExperimentID:
+  rootdir: /home/user/Desktop/Documents/TimeSocialDistancing
+output:
+  html_document: 
+    df_print: paged
+    toc: yes
+  html_notebook:
+    code_folding: hide
+    toc: yes
+---
+
+
+
+```{r setup, include= FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = F)
+```
+
+```{r, include= F}
+library(tidyverse)
+# source('helpers.R')
+library(stringr)
+```
+
+
+#Read and Describe Data
+```{r}
+##Extracting 1-Back
+
+
+
+OrigNback <- read.csv2("/home/cyril/Documents/Cognition & Brain Dynamics/TimeSocialDistancing/data control session/data control session/data-1back-3back_Japan-France_2021-08-31.csv", sep = ",")
+
+
+
+
+head(OrigNback) 
+#393 056 (JP + FR)
+
+Nback <- OrigNback  %>% #333100
+  filter(str_detect(display, "block1back") | str_detect(display, "block3back")) %>%
+  select(Session, Country, `Experiment_ID`, PID, Run, Unique_Name, ILI, duration, randomise_blocks,`Zone_Type`, duration, Response, `Spreadsheet_Name`, `Reaction_Time`, Correct, Attempt, `UTC_Date.x`, Handedness, Sex, Age)%>%
+  rename(nback = Unique_Name,
+         UTC_Date = UTC_Date.x,
+         Spreadsheet = Spreadsheet_Name,
+        randomblock = randomise_blocks) %>%
+  mutate(ILI = as.factor(ifelse(ILI  == 1500, "1500ms", "1800ms")),
+         condition = ifelse(duration == "45s"  & ILI == "1500ms", 1, 0),
+         condition = ifelse(duration == "90s" & ILI == "1500ms", 2, condition),
+         condition = ifelse(duration == "45s"  & ILI == "1800ms", 3, condition),
+         condition = ifelse(duration == "90s"  & ILI == "1800ms", 4, condition))
+                          
+
+
+
+
+
+ItalyOGNback <- read.csv2("/home/cyril/Documents/Cognition & Brain Dynamics/TimeSocialDistancing/data control session/data control session/data-1back-3back_Italy_2021-11-11.csv", sep = ",")
+#97452 obs
+
+ItalyNback <- ItalyOGNback  %>%  #82734 obs
+  filter(str_detect(display, "block1back") | str_detect(display, "block3back")) %>%
+  select(Session, Country, `Experiment_ID`, PID, Run, Unique_Name, ILI, duration, randomise_blocks,`Zone_Type`, duration, Response, `Spreadsheet_Name`, `Reaction_Time`, Correct, Attempt, `UTC_Date.x`, Handedness, Sex, Age)%>%
+  rename(nback = Unique_Name,
+         UTC_Date = UTC_Date.x,
+         Spreadsheet = Spreadsheet_Name,
+        randomblock = randomise_blocks) %>%
+  mutate(ILI = as.factor(ifelse(ILI  == 1500, "1500ms", "1800ms")),
+         duration = as.factor(ifelse(duration  == 45, "45s", "90s")),
+         condition = ifelse(duration == "45s"  & ILI == "1500ms", 1, 0),
+         condition = ifelse(duration == "90s" & ILI == "1500ms", 2, condition),
+         condition = ifelse(duration == "45s"  & ILI == "1800ms", 3, condition),
+         condition = ifelse(duration == "90s"  & ILI == "1800ms", 4, condition),
+         Spreadsheet = ifelse(Spreadsheet == "n_back 1", "n_back1", Spreadsheet),
+         Spreadsheet = ifelse(Spreadsheet == "n_back 2", "n_back2", Spreadsheet),
+         Spreadsheet = ifelse(Spreadsheet == "n_back 3", "n_back3", Spreadsheet))
+
+
+
+
+Nback <- bind_rows(Nback, ItalyNback)  #415834 obs
+
+
+
+Nback <- Nback %>%
+  mutate(timestamp = str_replace_all(UTC_Date, " ", ""),
+         timestamp = str_replace_all(timestamp, "-", ""),
+         timestamp = str_replace_all(timestamp, ":", ""),
+         timestamp = as.numeric(timestamp))
+
+
+```
+
+
+
+
+
+#Remove duplicates + counting ID and observations by country
+```{r}
+Nback %>%
+  count(PID) #242 participants
+
+
+
+#nb of subjects by country (8 countries)  AR:145/CA:33/FR:412/GR:133/IN:53/IT:156/JP:108/TR:146
+nb_subjects <- Nback %>%
+  group_by(PID) %>%
+  summarise(Country = first(Country)) %>%
+  group_by(Country) %>%
+  summarise(numbersubjects = n())
+nb_subjects #154 FR, Italy 45 and JP 43
+```
+
+#Read spreadsheets used for each trials and add variable that indicates the number of target letters
+```{r}
+#load spreadsheets
+sprdsheet1b1 <-read.csv2("/home/cyril/Documents/Cognition & Brain Dynamics/data/spreadsheet1back_1.csv",  sep = ",") %>%
+  mutate(Spreadsheet = "n_back1")
+sprdsheet1b2 <-read.csv2("/home/cyril/Documents/Cognition & Brain Dynamics/data/spreadsheet1back_2.csv", sep = ",")%>%
+  mutate(Spreadsheet = "n_back2")
+sprdsheet1b3 <-read.csv2("/home/cyril/Documents/Cognition & Brain Dynamics/data/spreadsheet1back_3.csv", sep = ",")%>%
+  mutate(Spreadsheet = "n_back3")
+sprdsheet3b1 <-read.csv2("/home/cyril/Documents/Cognition & Brain Dynamics/data/spreadsheet3back_1.csv", sep = ",")%>%
+  mutate(Spreadsheet = "n_back1")
+sprdsheet3b2 <-read.csv2("/home/cyril/Documents/Cognition & Brain Dynamics/data/spreadsheet3back_2.csv", sep = ",")%>%
+  mutate(Spreadsheet = "n_back2")
+sprdsheet3b3 <-read.csv2("/home/cyril/Documents/Cognition & Brain Dynamics/data/spreadsheet3back_3.csv", sep = ",")%>%
+  mutate(Spreadsheet = "n_back3")
+
+#match spreadshets
+sprdsheet <- bind_rows(sprdsheet1b1, sprdsheet1b2, sprdsheet1b3, sprdsheet3b1, sprdsheet3b2, sprdsheet3b3) %>%
+   mutate(condition = ifelse(duration == "45s"  & ILI == 1500, 1, 0),
+         condition = ifelse(duration == "90s" & ILI == 1500, 2, condition),
+         condition = ifelse(duration == "45s"  & ILI == 1800, 3, condition),
+         condition = ifelse(duration == "90s"  & ILI == 1800, 4, condition)) %>%
+   filter(display == "block1back" | display == "block3back") %>%
+        mutate(nback = ifelse(display == "block1back", "1back", "3back"))
+
+ #determine nb of target and non-target letters for each set of conditions
+nb_target <- sprdsheet %>%
+  filter(condition != 0) %>%
+  group_by(nback, Spreadsheet, condition) %>%
+  summarise(ntarget = sum(ANSWER == "Left"), notarget = sum(ANSWER == "Down"))
+nb_target
+
+
+Nback <- left_join(Nback, nb_target, by = c( "nback", "Spreadsheet", "condition"))
+
+Nback %>%
+  filter(is.na(notarget)) #only zone.type likert, continue button...
+
+
+```
+
+#Block number index
+```{r}
+#add a column "block number" identifying and indexing each trial of session 1
+#keep only first Run 1 for participants that did 2 or 3 Run1 for some reasons
+
+Nback <- Nback %>%
+  mutate(end = `Zone_Type` == "response_rating_scale_likert",
+         block_nb = cumsum(end),
+         block_nb = ifelse(end == T, block_nb - 1, block_nb)) %>%
+  select(-end)
+
+Nback %>% count(block_nb) #4712 blocks
+```
+
+
+#Confinement Tracker : remove runs completed when participants were not confined
+```{r}
+ConfTrack <- read.csv2("/home/cyril/Documents/Cognition & Brain Dynamics/TimeSocialDistancing/data control session/data control session/data-ConfinementTrack_Italy-France-Japan_2021-11-11.csv", sep = ",")
+
+
+
+#verify number of ID after selection with criterion
+countID <- ConfTrack %>%
+    group_by(`Experiment_ID`, PID) %>%
+    summarise(PID = first(PID)) %>%
+  group_by(`Experiment_ID`) %>%
+  summarise(n = n())
+countID  #184 (FR), 46 (JP), 48 (IT)
+
+ConfTrack %>%
+  filter(`Question_Key` %in% 'ConfStage') %>%
+    group_by(`Experiment_ID`, PID) %>%
+    summarise(PID = first(PID)) %>%
+  group_by(`Experiment_ID`) %>%
+  summarise(n = n())
+
+
+
+# Translation "during"
+during <- c("during", "pendant", "κατά τη διάρκεια", "sırasında", "durante", "規制（自粛）中", "Durante")
+
+tracker <- ConfTrack %>%
+  filter(`Question_Key` %in% 'ConfStage') %>%
+  mutate(Conftrack = Response) %>%
+  select(PID, Conftrack)
+
+
+#merge Conftracker and Nback
+Nback <- left_join(Nback, tracker, by = c("PID")) #415834 -->  415834 obs
+
+  Nback %>%
+  group_by(PID) %>%
+  summarise(Country = first(Country)) %>%
+  group_by(Country) %>%
+  summarise(numbersubjects = n())
+  #154 (FR) + 45 (IT) + 43 (JP) 
+
+Nback <- Nback %>%
+  filter(!(Conftrack %in% during)) # we remove participants that completed n-back task during confinement
+
+
+#verify number of participant for each country: 
+nb_subjects <- Nback %>%
+  group_by(PID) %>%
+  summarise(Country = first(Country)) %>%
+  group_by(Country) %>%
+  summarise(numbersubjects = n())
+nb_subjects   #140 (FR) + 42 (IT) + 20 (JP) subjects --> 14 french subjects, 3 italians and 23 japanese subjects were removed because they completed the task during confinement
+
+
+#Nback : 415834 obs --> 342697 obs
+
+#202 PID
+```
+
+
+  
+#Deal with attempts
+```{r}
+
+##keyboard response Attempts
+Table_Attempts <- Nback %>%  
+  group_by(Attempt) %>%
+  count() %>%
+  filter(as.numeric(Attempt) <10)
+Table_Attempts
+# 140 000 first attempts, less than 10 000 second or others attempts
+ 
+Nback <- Nback %>%            #removing all responses with more than one Attempt
+  filter( Zone_Type != "response_keyboard" | Attempt %in% c("1", NA))
+#~  342697 obs -->  317840 obs
+
+
+#Attempts for durations estimation or Likert
+
+
+Nback %>% 
+  filter(Zone_Type == "response_text_entry") %>%
+  group_by(Attempt) %>%
+  count()
+# 19 responses with more than 1 Attempts...
+
+Nback %>% 
+  filter(Zone_Type == "response_text_entry" & Attempt > 1) 
+  
+#... but some second attempts were not indexed (NA)
+
+blockw2answers <- Nback %>%   #102 blocks among  with more than one attempts
+  filter(Zone_Type == "response_text_entry") %>%
+  group_by(block_nb, .add =T) %>%
+   summarise(n = n()) %>%
+  filter(n > 1)
+
+Nback %>% 
+  filter(block_nb %in% blockw2answers$block_nb)
+  
+  
+
+#Responses for both attempts are identical --> keep the first one
+  
+  
+  # Nback <- Nback %>%            #removing all responses with more than one Attempt
+  # filter( Zone_Type != "response_text_entry" | Attempt %in% c("1", NA))
+  
+  
+first_attempts <- Nback %>%   #3848 tasks
+  filter(Zone_Type == "response_text_entry") %>%
+  group_by(block_nb, .add =T) %>%
+  dplyr::slice(which.min(timestamp)) %>%
+    select(timestamp)
+
+response_to_rm <- setdiff((filter(Nback, Zone_Type == "response_text_entry"))$timestamp, first_attempts$timestamp)  #113 trials
+
+Nback %>% 
+  filter(timestamp %in% response_to_rm)
+
+Nback <- Nback %>%
+        filter(!(timestamp %in% response_to_rm & Zone_Type == "response_text_entry"))  
+
+#Remove mysterious second 479 response_entry line :
+Nback <- Nback %>%
+  filter(!(block_nb == 479 & Zone_Type == "response_text_entry" & is.na(Response)))
+
+
+#317840 - 113 - 1 --> 317726 obs
+
+# Remove duplicate responses
+  Nback <- Nback %>% distinct #316794
+
+```
+
+
+
+
+
+#Number of responses  --> few trials with too much responses, but lots of trials with few responses
+```{r}
+Nback %>%
+  group_by(block_nb, .add = T) %>%
+  filter(Response %in% c("Left", "Down")) %>%
+  summarise(n= n(), duration = first(duration)) %>%
+  group_by(duration, n) %>%
+  summarise(nn = n())
+
+number_resp = Nback %>%
+   group_by(duration, ILI, nback) %>%
+  group_by(block_nb, .add = T) %>%
+  filter(Response %in% c("Left", "Down")) %>%
+  summarise(n = n(), duration = first(duration))
+
+number_resp %>%
+  filter(!is.na(duration)) %>%
+  ggplot(aes(n, group = duration, colour = duration)) +
+  facet_grid(duration~ILI) +
+           geom_histogram(position = "dodge", binwidth=1,
+                   colour = "black" , fill="white") +
+  labs(y = "count", x = "Number of Responses", title ="Number of responses (Down or Left) for 45s and 90s tasks") +
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5))
+  # scale_x_continuous(limits = c(0, 70), breaks = seq(from = 0, to = 70, by = 5))
+
+# #some task have 2 times or 3 times more responses than expected
+
+
+nbresp <- Nback %>%
+  filter(Zone_Type == "response_keyboard") %>%
+  select(block_nb, condition) %>%
+    group_by(block_nb) %>%
+summarise(n = n(),condition = first(condition))
+nbresp
+
+blocktorm15 <- nbresp %>%
+  filter(condition == 5 | condition == 1) %>%
+  filter(is.na(block_nb) | n > 65)
+
+blocktorm26 <- nbresp %>%
+  filter(condition == 6 | condition == 2) %>%
+  filter(is.na(block_nb) | n>125)
+
+blocktorm37 <- nbresp %>%
+  filter(condition == 3 | condition == 7) %>%
+  filter(is.na(block_nb) | n > 57)
+
+blocktorm48 <- nbresp %>%
+  filter(condition == 4 | condition == 8) %>%
+  filter(is.na(block_nb) | n>107)
+
+blocktorm <- bind_rows(blocktorm15, blocktorm26, blocktorm37, blocktorm48) #0 blocks to rm
+
+
+Nback <- Nback %>%
+  filter(!(block_nb %in% blocktorm$block_nb))
+
+blocknb <-Nback %>%
+  group_by(block_nb) %>%
+  summarise(n = n()) 
+blocknb
+#3985 trials
+
+Nback %>%
+  count(PID)   #202 PID
+```
+
+
+
+
+
+
+##Filtering and formatting data
+```{r}
+
+
+# Remove excess tasks (for duration estimation and likert response columns)
+first_trial <- Nback %>%   #3833 tasks
+  filter(Zone_Type == "response_text_entry") %>%
+  group_by(PID) %>%
+  group_by(nback, .add =T) %>%
+  group_by(Run, .add =T) %>%
+  group_by(randomblock, .add =T) %>%
+  dplyr::slice(which.min(timestamp)) %>%
+  select(block_nb)
+
+
+trials_to_rm <- setdiff(blocknb$block_nb, first_trial$block_nb)  #3985 - 3833 = 152 trials 
+
+Nback <- Nback %>%
+        filter(!(block_nb %in% trials_to_rm))  #316 794 --> 316471 observations
+
+
+
+#merge entry response (likert scale and duration estimation) with other responses
+df1 <- Nback %>% #139935 obs
+  filter(Zone_Type == "response_keyboard") %>%
+  select(-Zone_Type) 
+
+df2 <-Nback %>%  #3833 obs
+  filter(Zone_Type == "response_text_entry" | Zone_Type == "response_rating_scale_likert") %>% 
+  select(-timestamp, -UTC_Date, - Reaction_Time, - Attempt, - ntarget, -notarget) %>%
+  mutate(Response = as.character(Response)) %>% 
+  pivot_wider(values_from = Response, names_from = Zone_Type)
+
+
+#Nback_all --> 139935 obs
+Nback_all <- left_join(df1, df2, by = c("PID", "Country", "Session", "nback", "randomblock", "Run", "block_nb",  "Conftrack", "Age", "Sex", "Handedness")) %>%
+  select(-Correct.y, - duration.y, -ILI.y, - condition.y, -Spreadsheet.y, -Experiment_ID.y) %>%
+  filter(!is.na(response_text_entry)) %>%
+  rename(duration = duration.x, 
+         ILI = ILI.x, 
+         Correct = Correct.x,
+         condition = condition.x,
+         response_arrow = Response,
+         likert = response_rating_scale_likert)
+
+#number of subjects --> 199 PID
+Nback_all %>%  
+  group_by(PID) %>%
+  summarise(n = n())
+
+#number of blocks --> 3833 obs
+blocks <- Nback %>% 
+  group_by(block_nb) %>%
+  summarise(n = n())
+blocks
+
+blockswithnoresps <- setdiff(first_trial$block_nb, blocks$block_nb)
+#participants who did not make an estimate have been removed
+#blocks with no responses (~0))
+
+
+```
+
+
+
+##translating subjective duration estimates and add them to Nback
+```{r}
+##formatting and translating subjective duration estimate
+
+#getting rid of spaces, punctuation, "::" and words that beginning by m, d or λ (for minutes, dakika and λεπτό))     
+subj_duration = Nback %>% filter(Zone_Type == "response_text_entry") %>% 
+  select(PID, Response, Run, randomblock, nback) %>% 
+  mutate(Response = str_to_lower(as.character(Response)),
+          Response = str_replace_all(Response, "０", "0"),
+          Response = str_replace_all(Response, "１", "1"),
+          Response = str_replace_all(Response, "２", "2"),
+          Response = str_replace_all(Response, "３", "3"),
+          Response = str_replace_all(Response, "deytera", ""),
+          Response = str_replace_all(Response, regex("m([a-z]{0,})"), ":"),
+          Response = str_replace_all(Response, regex("d([a-z]{0,})"), ":"),
+          Response = str_replace_all(Response, regex("λ([a-z]{0,})"), ":"),
+          Response = str_replace_all(Response, regex("[:punct:]"), ":"),
+          Response = str_replace_all(Response, regex("[:space:]"), ""),
+          Response = str_replace_all(Response, "::", ":"))
+#3833 estimations
+
+subj_duration1 <- subj_duration %>% 
+  mutate(translated = strtoi(
+    as.difftime(Response, format = "00:%M:%S", units = "sec")))  #recognize duration with format (mm:ss)
+
+subj_duration2 <- subj_duration1 %>% 
+  filter(is.na(translated)) %>%   #among duration not yet translated
+  mutate(translated = strtoi(
+    as.difftime(Response, format = "%M:%S", units = "sec")))  #recognize duration with format (mm:ss)
+
+subj_duration3 <- subj_duration2 %>% 
+  filter(is.na(translated)) %>%   #among duration not yet translated
+  mutate(translated = ifelse(
+    str_detect(Response, regex("(\\d{1,2})s([a-z]{0,})")),     #if two digit only, recognize them as (ss)
+     strtoi(as.difftime(Response, format = c("%S"), units = "sec")),
+    NA)) 
+
+subj_duration4 <- subj_duration3 %>% 
+  filter(is.na(translated)) %>%   #among duration not yet translated
+  mutate( translated = ifelse(
+    str_detect(Response, regex("\\d{4}")),    #if series of 4 digits, recognize them as (mmss)
+     strtoi(as.difftime(Response, format = c("%M%S"), units = "sec")),
+    NA)) 
+
+subj_duration5 = subj_duration4 %>% 
+  filter(is.na(translated)) %>%  #among duration not yet translated
+  mutate(translated = parse_number(Response)) #extract only the number from the string
+
+subj_duration6 = subj_duration5 %>% 
+  filter(is.na(translated)) %>%  #among duration not yet translated
+  mutate(translated = ifelse(str_detect(Response, regex("un([a-z]{0,})")), 1, NA)) #extract only the number from the string
+
+
+#merge each dataframe with their translated values
+subj_duration = full_join(subj_duration1, subj_duration2, copy = F) %>% filter(!is.na(translated))
+subj_duration = full_join(subj_duration, subj_duration3, copy = F) %>% filter(!is.na(translated))
+subj_duration = full_join(subj_duration, subj_duration4, copy = F) %>% filter(!is.na(translated))
+subj_duration = full_join(subj_duration, subj_duration5, copy = F) %>% filter(!is.na(translated))
+subj_duration = full_join(subj_duration, subj_duration6, copy = F) %>% 
+# subj_duration = full_join(subj_duration, subj_duration6, copy = F) %>%
+  mutate(translated = ifelse(translated > 500, translated/60, translated),
+         translated = ifelse(translated < 6, translated*60, translated))  
+
+#get the duration estimation that ave strange formats and translate them manually 
+no_translated = subj_duration  %>% 
+  filter(is.na(translated))  
+  # write_csv(file.path(outdir,'no_translated.csv'))     #47 no translated: among them, a lot of "secondi"
+
+#merge subj_duration with Nback ==> add translated estimates
+Nback_all <- left_join(Nback_all, subj_duration, by = c("PID", "Run", "nback", "randomblock")) %>%
+  filter(!is.na(translated))  
+Nback_all #138530 obs
+
+#Count overall number of trials (8 trials per Run per Participants ) 
+
+Nback_blocks <- Nback_all %>%
+  group_by(PID) %>%
+  group_by(nback, .add = T) %>%
+  group_by(Run, .add = T) %>%
+  group_by(duration, ILI, .add = T) %>%
+  summarise( translated = first(translated),
+             likert = first(likert),
+            block_nb = first(block_nb)) %>%
+  ungroup()
+
+Nback_blocks #3335 trials
+
+
+
+Nback_all <- Nback_all %>% select(Session, Country, PID, Run, block_nb, nback, ILI, likert, duration, condition, translated, Reaction_Time, response_arrow, ntarget, notarget, Correct, Age, Sex, Handedness, timestamp) %>%
+write_csv(file.path("/home/cyril/Documents/Cognition & Brain Dynamics/TimeSocialDistancing/nback_TSD",'SCglobal_nback.csv'))
+
+
+#199 participants
+ Nback_all %>%
+  count(PID) 
+```
+
+
