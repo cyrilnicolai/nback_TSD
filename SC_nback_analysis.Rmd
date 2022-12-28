@@ -1,0 +1,462 @@
+
+#DEF
+
+##packages
+```{r, include= F}
+library(tidyverse)
+library(rmarkdown)
+library(ggpubr)
+library(viridis)
+library(cowplot)
+library(ggridges)
+
+library(lme4)
+library(lmtest)
+library(performance)
+library(emmeans)
+library(car)
+
+library(R.utils)
+library(RColorBrewer)
+
+library(factoextra)
+library(moments)
+library(ordinal)
+library(sure)
+library(stargazer)
+```
+
+##Functions
+```{r, include= F}
+## Standard Error of the Mean (SEM)
+sem <- function(x, na.rm=FALSE) {
+     if(na.rm==TRUE) x <- na.omit(x)
+     sd(x)/sqrt(length(x)) 
+}  #Don't forget 10 ms bruit gorilla  
+
+##coefficent of variation
+cv <- function(x){sd(x)/mean(x)}
+
+#Z-score
+z_score <- function(x){(x - mean(x)) / sd(x)}
+
+## Outliers removal
+remove_outliers <- function(x, na.rm = TRUE, ...) {
+qnt <- quantile(x, probs = c(.25, .75), na.rm = na.rm, ...)
+H <- 1.5 * IQR(x, na.rm = na.rm)
+Y <- x
+Y[x < (qnt[1] - H)] <- NA
+Y[x > (qnt[2] + H)] <- NA
+Y}
+
+```
+
+##Palettes
+```{r, include= F}
+#Palettes of colours
+cbPalette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442",
+               "#0072B2", "#D55E00", "#CC79A7")
+
+cbPalette2 <- c("#0072B2", "#CC79A7")
+
+cbPalette2_v2 <- c("#66c2a4", "#fc8d59")
+
+cbPalette4 <- c( "#56B4E9", "#009E73", "#E69F00", "#D55E00", "#CC79A7")
+
+cbPalette5 <- c( "#CC79A7", "#009E73")
+```
+
+#FORMATTING DATA AND OUTLIERS REMOVAL
+
+##Formatting dataset
+```{r}
+
+#Extract processed data for session 1
+file <- "/home/cyril/Documents/Cognition & Brain Dynamics/TimeSocialDistancing/nback_TSD/SCglobal_nback.csv"
+
+Nback = read.csv2(file, sep = ",")
+
+
+# Each row is a participant response
+#Defining if the letter is a target letter and if an answer is a hit, a correct reject, a miss or a false alarm. 
+Nback_all <- Nback %>%           #564579 observations
+   filter(!is.na(translated)) %>%
+         mutate(PID = as.factor(PID),
+         estimate = as.numeric(as.character(translated)),
+         relative_timing = estimate / parse_number(as.character(duration)),
+         timing_error = estimate - parse_number(as.character(duration)),
+         age = as.numeric(as.character(Age)))
+        
+
+
+# Each row is a different trial
+Nback_blocks <- Nback_all %>%    #3785 trials
+  group_by(country) %>%
+  group_by(PID, .add = T) %>%
+  group_by(Run, .add = T) %>%
+  group_by(nback, .add =T) %>%
+  group_by(ILI, duration, block_nb, .add = T) %>%
+  summarise(condition = first(condition),
+            likert = first(likert),
+            estimate = first(estimate),
+            timing_error = first(timing_error),
+            relative_timing = first(relative_timing),
+            ntarget = first(ntarget),
+            notarget = first(notarget),
+            mRT = mean(as.numeric(as.character(Reaction.Time))),
+            hit = sum(response_arrow == "Left" & Correct == T),
+            miss  = sum(response_arrow == "Down" & Correct == F),
+            fa = sum(response_arrow == "Left" & Correct == F),
+            cr = sum(response_arrow == "Down" & Correct == T),
+            HR = sum(response_arrow == "Left" & Correct == T)/ntarget,
+            # HR1 = sum(response_arrow == "Left" & Correct == T)/(miss + hit),
+            FA = sum(response_arrow == "Left" & Correct == F)/notarget,
+            # FA1 = sum(response_arrow == "Left" & Correct == F)/(fa + cr),
+            CR = sum(response_arrow == "Down" & Correct == T)/notarget,
+            MR = sum(response_arrow == "Down" & Correct == F)/ntarget,
+            handedness = first(handedness),
+            age = first(age),
+            sex = first(sex),
+            timestamp = first(timestamp)) %>%
+  ungroup() 
+
+
+ 
+#translate PoTJ Likert Scale from different countries in English
+veryquickly = c("muy rápido", "Très rapidement","Πολύ Γρήγορα","Very Fast","Molto veloce","Çok hızlı","とても速かった")
+quickly = c("rápido", "Rapidement","Γρήγορα","Fast","Veloce","Hızlı","速かった")
+normally = c("Normalement", "Κανονικά", "Neutral", "Neutrale", "普通", "Nötr", "normal")
+slowly = c("lento","Lentement","Αργά","Slow","Very Slow","Lentamente","Yavaş", "遅かった") 
+veryslowly = c("Muy lento", "Très lentement","Πολύ Αργά","Molto lentamente","Çok yavaş","とても遅かった")
+
+Nback_blocks <- Nback_blocks %>%
+  mutate(likert = ifelse(likert %in% veryquickly, "Very Quickly", as.character(likert)),
+         likert = ifelse(likert %in% quickly, "Quickly", as.character(likert)),
+         likert = ifelse(likert %in% normally, "Normally", as.character(likert)),
+         likert = ifelse(likert %in% slowly, "Slowly", as.character(likert)),
+         likert = ifelse(likert %in% veryslowly, "Very Slowly", as.character(likert))) %>%
+  mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly"))
+
+#dprime computation and dealing with score >= 1 or =< 0
+Nback_blocks <- Nback_blocks %>%
+  filter(HR < 1.2 & MR < 1.5) %>%
+  mutate(HR = ifelse(HR > 1, 1, HR),
+         FA = ifelse(FA > 1, 1, FA),
+         CR = ifelse(CR > 1, 1, CR),
+         HR = ifelse(HR == 0, 0.01, HR),
+  HR = ifelse(HR == 1, 0.99, HR),
+  FA = ifelse(FA == 0, 0.01, FA),
+  FA = ifelse(FA == 1, 0.99, FA),
+  zHR = qnorm(HR),
+  zFA = qnorm(FA),
+  dprime = zHR - zFA,
+  beta = exp(-zHR*zHR/2+zFA*zFA/2),
+  logbeta = log(beta))
+
+
+Nback_blocks <- Nback_blocks %>%
+  dplyr::select(-ntarget, -notarget, - hit, -miss, -fa, -cr, -zHR, -zFA)
+
+
+
+paged_table(Nback_blocks) #14893
+
+```
+
+
+
+
+##Remove retrospective tasks (first trial of the first run for each participant)
+```{r}
+Nback_blocks <- Nback_blocks %>%
+  group_by(PID) %>%
+  arrange(timestamp) %>%
+  mutate(timestamp2 = as.character(timestamp)) %>%
+  mutate(order = row_number()) 
+  
+#store retro
+retroNback_blocks <- Nback_blocks %>%
+  filter(order == 1)
+
+#Remove retrospective tasks (first trial of the first run for each participant)
+Nback_blocks = Nback_blocks %>%
+  filter(order != 1)
+
+#14,893 --> 13,796 trials
+
+
+Nback_blocks %>%
+  group_by(country, nback) %>%
+  summarise(n = n())
+
+#What is the first design condition encountered by the subject ? --> equally distributed
+Nback_blocks %>%
+  group_by(condition) %>%
+  count()
+```
+
+
+
+##Signal detection theory - HR, CR, FA and d' distribution (before outliers removal)
+```{r}
+
+#HR DISTRIBUTION
+
+# jpeg("DistributionHRpro1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(HR)) + 
+  facet_grid(.~nback) +
+  geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02, colour = "black" , fill="white") + 
+  theme_light() +
+  labs(y = "count", x = "HR", title ="Hit Rate (HR) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1), limits = c(-0.01,1.01))
+ # dev.off()
+
+
+#FA DISTRIBUTION
+
+# jpeg("DistributionFApro1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(FA)) + 
+  facet_grid(.~nback) +
+  geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02, colour = "black" , fill="white") + 
+  theme_light() +
+  labs(y = "count", x = "FA", title ="False alarm rate (FA) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1), limits = c(-0.01,1.01))
+ # dev.off()
+
+
+#CR DISTRIBUTION
+
+# jpeg("DistributionCRpro1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(CR)) + 
+  facet_grid(.~nback) +
+  geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02, colour = "black" , fill="white") +
+      # geom_density(aes(y = ..density..*(00 * 0.02)), alpha=.2, fill="lightgreen") +
+  theme_light() +
+  labs(y = "count", x = "CR", title ="Correct Rejection Rate (CR) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1), limits = c(-0.01,1.01))
+ # dev.off()
+
+#Dprime DISTRIBUTION
+
+# jpeg("DistributionD'pro1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(dprime)) + 
+  facet_grid(.~nback) +
+  geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02, colour = "black" , fill="white") + 
+      # geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.2, fill="lightgreen") +
+  theme_light() +
+  labs(y = "count", x = "d'", title ="D prime distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
+ # dev.off()
+
+```
+
+
+
+
+##Performance Outliers - no discrimination (d' = 0) or inverse discrimination (d' <0)
+```{r}
+
+#Outliers on d'
+
+perf_outliers <- Nback_blocks %>%
+filter(dprime <= 0) #2348 outliers (665 out of ~6500 1-back tasks -> ~10%, 1683 out of ~7500 3-back -> ~20%)
+
+Nback_blocks <- Nback_blocks %>%
+filter(dprime > 0)     #13796 --> 11448 obs
+
+
+#HR DISTRIBUTION
+
+# jpeg("DistributionHRpro2.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(HR)) + 
+  facet_grid(.~nback) +
+  geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02, colour = "black" , fill="white") + 
+  theme_light() +
+  labs(y = "count", x = "HR", title ="Hit Rate (HR) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1), limits = c(-0.01,1.01))
+ # dev.off()
+
+
+#FA DISTRIBUTION
+
+# jpeg("DistributionFApro2.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(FA)) + 
+  facet_grid(.~nback) +
+  geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02, colour = "black" , fill="white") + 
+  theme_light() +
+  labs(y = "count", x = "FA", title ="False alarm rate (FA) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1), limits = c(-0.01,1.01))
+ # dev.off()
+
+
+#CR DISTRIBUTION
+
+# jpeg("DistributionCRpro.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(CR)) + 
+  facet_grid(.~nback) +
+  geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02, colour = "black" , fill="white") +
+      # geom_density(aes(y = ..density..*(00 * 0.02)), alpha=.2, fill="lightgreen") +
+  theme_light() +
+  labs(y = "count", x = "CR", title ="Correct Rejection Rate (CR) distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 1, by = 0.1), limits = c(-0.01,1.01))
+ # dev.off()
+
+#Dprime DISTRIBUTION
+
+# jpeg("DistributionD'pro2.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(dprime)) + 
+  facet_grid(.~nback) +
+  geom_histogram(aes(y = ..count..), position = "dodge", binwidth=0.02, colour = "black" , fill="white") + 
+      # geom_density(aes(y = ..density..*(1000 * 0.02)), alpha=.2, fill="lightgreen") +
+  theme_light() +
+  labs(y = "count", x = "d'", title ="D prime distribution for 1-back and 3-back") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
+ # dev.off()
+
+```
+
+
+##Outliers removal on Timing Error
+```{r}
+# jpeg("DistribTEpro1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(timing_error)) + 
+  facet_grid(.~duration) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=1,
+                   colour = "black" , fill="white") + 
+  theme_light() +
+  labs(y = "count", x = "Timing Error (s)", title ="Timing Error distribution for 45s/90s tasks (before outliers removal)") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) 
+# dev.off()
+
+
+#Outliers on TE
+
+Nback_blocks <- Nback_blocks %>%
+  group_by(duration) %>%
+  mutate(ZTiming = scale(timing_error)) %>%
+  ungroup()
+
+estimation_outliers <- Nback_blocks %>%
+filter(abs(ZTiming) > 2)    #334  outliers  (147 for 45s)
+
+Nback_blocks <-  Nback_blocks %>%        #11448 -> 11114 trials
+  filter(abs(ZTiming) <= 2 ) %>%
+  dplyr::select(-ZTiming) 
+
+
+# jpeg("DistribTEpro2.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+  ggplot(aes(timing_error)) + 
+  facet_grid(.~duration) +
+           geom_histogram(aes(y = ..count..), position = "dodge", binwidth=1,
+                   colour = "black" , fill="white") + 
+  theme_light() +
+  labs(y = "count", x = "Timing Error (s)", title ="Timing Error distribution for 45s/90s tasks (after outliers removal)") + 
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.5)) +
+  scale_x_continuous(breaks = seq(from = -90, to = 90, by = 15),
+  limits = c(-91, 91))
+# dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+##Demographics
+```{r}
+#sex ratio
+Nback_blocks %>%
+  group_by(sex) %>%
+  summarise(n = n()) 
+
+#handedness ratio
+Nback_blocks %>%
+  group_by(country, handedness) %>%
+  summarise(n = n()) 
+
+#Age (year + month)
+Nback_blocks %>%
+  filter(!is.na(age)) %>%
+  summarise(mean = mean(as.numeric(as.character(age))), sd = sd(as.numeric(as.character(age))))
+
+
+#Graph density ridge, age distribution for each country
+# jpeg("DistribAge2S1.jpg", width = 4000, height = 2500, units = "px",res=600)
+Nback_blocks %>%
+   filter(age > 18) %>%
+    filter(country != "Columbia") %>%
+  mutate(country = as.factor(country)) %>%
+  ggplot( aes(y= country, x= age,  fill= country)) +
+    geom_density_ridges(alpha=0.6) +
+    theme_ridges() +
+    theme(legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8),
+      axis.title.y = element_text("vjust" = 0.5),
+      axis.title.x = element_text("hjust" = 0.5)) +
+  labs(y = "Country", x = "Age", title ="Age distribution of participants for each country") +
+  # scale_y_discrete(labels = c("France (278)", "Turkey (109)", "Argentina (106)", "Italy (101)", "Greece (93)",  "Japan (69)",  "India (37)",  "Canada (24)")) +
+  theme(plot.title = element_text(face = "bold", "hjust" = 0.3)) +
+  scale_x_continuous(breaks = seq(from = 20, to = 75, by = 5))
+# dev.off()
+
+  nb_subjects <- Nback_blocks %>%
+  group_by(PID) %>%
+  summarise(country = first(country)) %>%
+  group_by(country) %>%
+  summarise(numbersubjects = n())
+nb_subjects
+```
+
+
+## Retro trials --> outliers
+```{r}
+
+#perf outliers
+
+Rperf_outliers <- retroNback_blocks %>%
+filter(dprime <= 0) #250 outliers (65 1-back)
+
+retroNback_blocks <- retroNback_blocks %>%
+filter(dprime > 0)     #1097 --> 847 obs
+
+
+
+
+retroNback_blocks <- retroNback_blocks %>%
+  group_by(duration) %>%
+  mutate(ZTiming = scale(timing_error)) %>%
+  ungroup()
+
+Restimation_outliers <- retroNback_blocks %>%
+filter(abs(ZTiming) > 2)    #30 outliers  (13 for 45s)
+
+retroNback_blocks <-  retroNback_blocks %>%        #847 -> 817 trials
+  filter(abs(ZTiming) <= 2 ) %>%
+  dplyr::select(-ZTiming) 
+
+
+
+
+```

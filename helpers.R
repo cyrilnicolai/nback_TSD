@@ -137,6 +137,7 @@ lastmod <- googledrive::drive_get('https://docs.google.com/spreadsheets/d/1Mwy2a
   hoist(drive_resource,modified_on = 'modifiedTime') %>%
   mutate(modified_on = lubridate::ymd_hms(modified_on))
 
+
 loc <- file.info(f)
 if (loc$mtime < lastmod$modified_on) {
   

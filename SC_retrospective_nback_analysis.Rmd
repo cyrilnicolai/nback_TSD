@@ -970,7 +970,7 @@ lrtest(M1, M2)  #n.s p > 0.05  M1 better than M2
 M3 <-lm(relative_timing ~ duration + ILI, data=data)
 lrtest(M1, M3) #n.s p > 0.05  M1 better than M3
 
-M4 <-lm(relative_timing ~ duration + dprime, data=data)
+M4 <-lm(relative_timing ~ duration + nback, data=data)
 lrtest(M1, M4) #n.s p > 0.05  M1 better than M4
 
 M5 <-lm(relative_timing ~ duration + logbeta, data=data)
@@ -980,22 +980,22 @@ M6 <-lm(relative_timing ~ dprime , data=data)
 lrtest(M1, M6) #p< 0.05  M6 better than M1
 
 M7 <-lm(relative_timing ~ duration * dprime, data=data)
-lrtest(M6, M7) #n.s p > 0.05  M1 better than M7
+lrtest(M1, M7) #n.s p > 0.05  M1 better than M7
 
 M8 <-lm(relative_timing ~ logbeta *  dprime, data=data)
-lrtest(M6, M8) #n.s p = 0.14
+lrtest(M1, M8) #n.s 
 
 M9 <-lm(relative_timing ~ ILI * dprime, data=data)
-lrtest(M6, M9)  #n.s p = 0.11
+lrtest(M1, M9)  #n.s 
 
-M9 <-lm(relative_timing ~ nback * dprime, data=data)
-lrtest(M6, M9)  #n.s p = 0.11
+M10 <-lm(relative_timing ~ nback * duration, data=data)
+lrtest(M1, M10)  #n.s 
 
-M10 <-lm(relative_timing ~ duration * logbeta, data=data)
-lrtest(M6, M10)  #n.s p = 0.11
+M11 <-lm(relative_timing ~ duration * logbeta, data=data)
+lrtest(M1, M11)  #n.s p = 0.11
 
 
-compare_performance(M1, M2, M3, M4, M5, M6, M7, M8, M9) # ~equivalent AIC for every model, but better R2 for M9
+compare_performance(M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11) # ~equivalent AIC for every model, but better R2 for M9
 
 
 summary(M1)
@@ -1007,6 +1007,8 @@ summary(M6)
 summary(M7)
 summary(M8)
 summary(M9)
+summary(M10)
+summary(M11)
 
 #we verify model assumptions for M8 and M9
 
@@ -1016,10 +1018,10 @@ check_autocorrelation(M9) #OK
 check_collinearity(M9) #NOT OK --> High correlation !!
 
 
-summary(M6)
-check_heteroscedasticity(M6) #ok
-check_autocorrelation(M6) #OK
-check_collinearity(M6) #not relevant, only one term
+summary(M1)
+check_heteroscedasticity(M1) #ok
+check_autocorrelation(M1) #OK
+check_collinearity(M1) #not relevant, only one term
 
 stargazer(M6, type = "text",
            title = "Regression results Md7",
@@ -1028,8 +1030,9 @@ stargazer(M6, type = "text",
           digits = 3,
           star.cutoffs = c(0.05, 0.01, 0.001),
           digit.separator = "")
+confint(M6, oldNames=FALSE)
 
-#we choose M8 model
+#we choose M6 model
 
 summary(M6)
 anova(M6)
@@ -1350,11 +1353,15 @@ POTJILI = POTJILI + theme(legend.position = "none")
 #effect of ILI, duration and nback + interaction Bias / nback
 
 data = Nback_blocks %>%
-  filter(!is.na(likert_n)) #149 obs
+  filter(!is.na(likert)) #149 obs
 
 library(MASS)
 
 m1 = polr(likert ~ duration, data, Hess=T)
+# m1 = polr(likert ~ nback, data, Hess=T)
+# m1 = polr(likert ~ ILI, data, Hess=T)
+# m1 = polr(likert ~ dprime, data, Hess=T)
+# m1 = polr(likert ~ logbeta, data, Hess=T)
 
 m2 = polr(likert ~ duration + ILI, data, Hess=T)
 lrtest(m1,m2)  ## n.s
@@ -1404,14 +1411,23 @@ summary(m10)
 summary(m11)
 
 
-#we choose m13
+#we choose m1
+
+m1 = polr(likert ~ duration * bias, data, Hess=T)
 
 summary(m1)
+
 coeffs <- coef(summary(m1))
 p <- pnorm(abs(coeffs[, "t value"]), lower.tail = FALSE) * 2
 cbind(coeffs, "p value" = round(p,3)) #get the p-value for each effect
-
+confint(m1, oldNames=FALSE)
 exp(cbind(OR = coef(m1), ci = confint(m1))) #logit effects are difficult to interpret --> exp() to have % change
+
+
+
+emmeans(m1, pairwise ~ duration | logbeta,  at = list(dprime = c(-2, -1, 0, 1,2)), lmer.df = "satterthwaite")
+
+
 ```
 
 #Ordinal regression assumptions

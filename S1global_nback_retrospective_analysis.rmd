@@ -890,7 +890,7 @@ dev.off()
 
 ## Linear models Effects of duration, D' and bias on Relative Timing (Why not using the relative timing ?)
 ```{r}
-data <- Nback_blocks 
+data <- Nback_blocks #845 obs
 
 
 M1 <-lm(relative_timing ~ dprime, data=data)
@@ -948,6 +948,7 @@ stargazer(M4, type = "text",
           digits = 3,
           star.cutoffs = c(0.05, 0.01, 0.001),
           digit.separator = "")
+confint(M4, oldNames=FALSE)
 
 check_heteroscedasticity(M4) #not ok with check, but ok graphically with plot()
 check_autocorrelation(M4) #OK
@@ -1345,7 +1346,7 @@ POTJILI = POTJILI + theme(legend.position = "none")
 #effect of ILI, duration and nback + interaction Bias / nback
 
 data = Nback_blocks %>%
-  filter(!is.na(likert))
+  filter(!is.na(likert)) #838
 
 library(MASS)
 
@@ -1412,7 +1413,7 @@ summary(m3)
 coeffs <- coef(summary(m3))
 p <- pnorm(abs(coeffs[, "t value"]), lower.tail = FALSE) * 2
 cbind(coeffs, "p value" = round(p,3)) #get the p-value for each effect
-
+confint(m3, oldNames=FALSE)
 exp(cbind(OR = coef(m3), ci = confint(m3))) #logit effects are difficult to interpret --> exp() to have % change
 ```
 

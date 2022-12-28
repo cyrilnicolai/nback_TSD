@@ -19,7 +19,7 @@ library(lme4)
 library(lmtest)
 library(performance)
 library(emmeans)
-
+library(lsr)
 library(R.utils)
 library(RColorBrewer)
 
@@ -336,6 +336,9 @@ SCpro_blocks <-  SCpro_blocks %>%        #2931 -> 2842 trials
 Nback_blocks <- bind_rows(SCpro_blocks, SCretro_blocks, S1pro_blocks, S1retro_blocks) #15677
 ```
 
+```{r}
+Nback_blocks %>%  filter(!is.na(dprime))
+```
 
 
 
@@ -389,6 +392,12 @@ Md13 <-lmer(dprime ~ nback + ILI + duration * paradigm + (nback + paradigm|PID),
 lrtest(Md10, Md13) #p < 0.05*** 
 
 
+lrtest(Md1, Md2)
+lrtest(Md2, Md3)
+lrtest(Md3, Md8)
+lrtest(Md8, Md9)
+lrtest(Md9, Md10)
+lrtest(Md10, Md13)
 
 compare_performance(Md1, Md2, Md3, Md4, Md5, Md6, Md7, Md8, Md9, Md10, Md11, Md12, Md13) #Md13 best AIC
 
@@ -408,7 +417,9 @@ summary(Md13) #best model, show significant effect of design conditions and of t
 
 
 Md13 <-lmer(dprime ~ nback + ILI + duration * paradigm + (nback + paradigm|PID), data=data,  REML= T)
+
 summary(Md13)
+confint(Md13, oldNames=FALSE)
 stargazer(Md13, type = "text",
            title = "Regression results Md3",
           header = FALSE,
@@ -416,6 +427,8 @@ stargazer(Md13, type = "text",
           digits = 3,
           star.cutoffs = c(0.05, 0.01, 0.001),
           digit.separator = "")
+
+
 
 emmeans(Md13, ~paradigm,  lmer.df = "satterthwaite")
 emmeans(Md13, ~ nback,  lmer.df = "satterthwaite")
@@ -426,7 +439,7 @@ emmeans(Md13, pairwise ~ duration + paradigm,  lmer.df = "satterthwaite")
 
 #autocorrelation
 check_autocorrelation(Md13)
-durbinWatsonTest(resid(Md13)) # = 2 no autocorrelation
+# durbinWatsonTest(resid(Md13)) # = 2 no autocorrelation
 
 check_heteroscedasticity(Md13) #not OK, but graphically OK
 check_collinearity(Md13) #OK
@@ -570,23 +583,32 @@ MB7 <-lmer(logbeta ~ ILI * nback * duration +(1|PID), data=data,  REML=FALSE)
 lrtest(MB4, MB7) #p < 0.05*** -> More complex model (MB7) significantly better than MB4  but MODERATE COLLINEARITY
 
 MB8 <-lmer(logbeta ~ ILI * nback * duration + Session + (1|PID), data=data,  REML=FALSE)
-lrtest(MB7, MB8) #p = 0.05 . -> More complex model (MB8) significantly better than MB7    but MODERATE COLLINEARITY
+lrtest(MB7, MB8) #p = 0.05 . -> More complex model (MB8) not significantly better than MB7  and MODERATE COLLINEARITY but we choose to keep Session
 
-MB9 <-lmer(logbeta ~ ILI * nback * duration + paradigm + (1|PID), data=data,  REML=FALSE)
+MB9 <-lmer(logbeta ~ ILI * nback * duration + Session + paradigm + (1|PID), data=data,  REML=FALSE)
 lrtest(MB8, MB9) #p < 0.05*** -> More complex model (MB9) significantly better than MB8 
 
 MB10 <-lmer(logbeta ~ ILI * nback * duration + paradigm + Session:duration + (1|PID), data=data,  REML=FALSE)
 lrtest(MB9, MB10) #p < 0.05**  other interactions with Session not significant
 
-MB11 <-lmer(logbeta ~ ILI * nback * duration + paradigm + Session:duration + paradigm:duration +  paradigm:ILI + paradigm:nback + (1|PID), data=data,  REML=FALSE)
+MB11 <-lmer(logbeta ~ ILI * nback * duration + paradigm  + Session + Session:duration + paradigm:duration +  paradigm:ILI + paradigm:nback + (1|PID), data=data,  REML=FALSE)
 lrtest(MB10, MB11) #p < 0.05*** -> More complex model (MB10) not significantly better than MB8 AND SINGULAR
 
-MB12 <-lmer(logbeta ~ ILI * nback * duration + paradigm + Session:duration + paradigm:duration +  paradigm:ILI + paradigm:nback + (nback|PID), data=data,  REML=FALSE)
+
+MB12 <-lmer(logbeta ~ ILI * nback * duration + paradigm + Session + Session:duration + paradigm:duration +  paradigm:ILI + paradigm:nback + (nback|PID), data=data,  REML=FALSE)
 lrtest(MB11, MB12) #p < 0.05*** 
 
-MB13 <-lmer(logbeta ~ ILI * nback * duration + paradigm + Session:duration + paradigm:duration +  paradigm:ILI + paradigm:nback + (nback + duration|PID), data=data,  REML=FALSE)
+MB13 <-lmer(logbeta ~ ILI * nback * duration + paradigm + Session + Session:duration + paradigm:duration +  paradigm:ILI + paradigm:nback + (nback + duration|PID), data=data,  REML=FALSE)
 lrtest(MB12, MB13) #p < 0.05***  but fit is singular (ILI and Session as random model were not significant, Paradigm was significant but the fit was singular)
 
+lrtest(MB1, MB2)
+lrtest(MB2, MB3)
+lrtest(MB3, MB4)
+lrtest(MB4, MB7)
+lrtest(MB7, MB8)
+lrtest(MB8, MB9)
+lrtest(MB9, MB11)
+lrtest(MB11, MB12)
 
 
 compare_performance(MB1, MB2, MB3, MB4, MB5, MB6, MB7, MB8, MB9, MB10, MB11, MB12, MB13) #MB13 (and then MB12)-> best AIC but singular
@@ -601,13 +623,15 @@ summary(MB8)
 summary(MB9)
 summary(MB10)
 summary(MB11)
-summary(MB12) #best model MB12 --> shows significative main effects of ILI, duration, nback and Paradigmn on Bias + interactions between task duration and session
+summary(MB12) #best model MB12 --> shows significative main effects of ILI, duration, nback, Session and Paradigmn on Bias + interactions between task duration and session
 summary(MB13) 
 
 
+MB12 <-lmer(logbeta ~ ILI * nback * duration + paradigm + Session + Session:duration + paradigm:duration +  paradigm:ILI + paradigm:nback + (nback|PID), data=data,  REML= T)
 
-MB12 <-lmer(logbeta ~ ILI * nback * duration + paradigm + Session:duration + paradigm:duration +  paradigm:ILI + paradigm:nback + (nback|PID), data=data,  REML= T)
 summary(MB12)
+
+confint(MB12, oldNames=FALSE)
 stargazer(MB12, type = "text",
            title = "Regression results MB12",
           header = FALSE,
@@ -761,9 +785,10 @@ stat_summary(fun = mean)  +
 
 ## Models for mRT
 ```{r}
+data <- Nback_blocks #15677
+
 
 MRT1 <-lmer(mRT ~ duration + (1|PID), data=data,  REML=FALSE)
-
 
 MRT2 <- lmer(mRT ~ duration + ILI +(1|PID), data=data,  REML=FALSE)
 lrtest(MRT1, MRT2) #p < 0.05*** -> More complex model (MRT2) significantly better than MRT1
@@ -796,19 +821,21 @@ MRT11 <- lmer(mRT ~ duration + nback + ILI + duration:nback + ILI:nback + Sessio
 lrtest(MRT11, MRT10) #p < 0.05*** ->  but no interactions between paradigm and duration
 
 MRT12 <- lmer(mRT ~ duration + nback + ILI + duration:nback + ILI:nback + Session + paradigm + paradigm:nback + paradigm:ILI + (nback + paradigm|PID), data=data,  REML=FALSE)
-lrtest(MRT12, MRT11) #p < 0.05*** -> better model with paradigm as a random effect, but for Session, ILI and nback, p > 0.05 and fit is singular
+lrtest(MRT12, MRT11) #p < 0.05*** -> better model with paradigm as a random effect, but not for Session, ILI and nback, p > 0.05 and fit is singular
 
 MRT13 <- lmer(mRT ~ duration + nback + ILI + duration:nback + ILI:nback + Session + paradigm + paradigm:nback + paradigm:ILI + (nback * paradigm|PID), data=data,  REML=FALSE)
-lrtest(MRT13, MRT12)
+lrtest(MRT13, MRT12) #p < 0.05***
 
-compare_performance(MRT1, MRT2, MRT3, MRT4, MRT5, MRT6, MRT7, MRT8, MRT9, MRT10, MRT12, MRT13) #MRT7, 8 & 9 -> best AIC but 8 and 9 singular
+compare_performance(MRT1, MRT2, MRT3, MRT4, MRT5, MRT6, MRT7, MRT8, MRT9, MRT10, MRT11, MRT12, MRT13) 
+
+AIC(MRT1, MRT2, MRT3, MRT6, MRT7, MRT8, MRT9, MRT10, MRT11, MRT13)
 
 summary(MRT1)
 summary(MRT2) 
 summary(MRT4)
 summary(MRT5)
 summary(MRT6)
-summary(MRT7)#best model --> shows significative effects of duration and ILI on mean Reaction Time
+summary(MRT7)
 summary(MRT8)
 summary(MRT9)
 summary(MRT10)
@@ -816,6 +843,16 @@ summary(MRT11)
 summary(MRT12)
 summary(MRT13)
 
+
+lrtest(MRT1, MRT2)
+lrtest(MRT2, MRT3)
+lrtest(MRT3, MRT6)
+lrtest(MRT6, MRT7)
+lrtest(MRT7, MRT8)
+lrtest(MRT8, MRT9)
+lrtest(MRT9, MRT10)
+lrtest(MRT10, MRT11)
+lrtest(MRT11, MRT13)
 
 
 MRT13 <- lmer(mRT ~ duration + nback + ILI + duration:nback + ILI:nback + Session + paradigm + paradigm:nback + paradigm:ILI + (nback * paradigm|PID), data=data,  REML=T)
@@ -827,6 +864,7 @@ stargazer(MRT13, type = "text",
           digits = 3,
           star.cutoffs = c(0.05, 0.01, 0.001),
           digit.separator = "")
+confint(MRT13, oldNames=FALSE)
 
 emmeans(MRT13, ~nback,  lmer.df = "satterthwaite")
 emmeans(MRT13, ~duration,  lmer.df = "satterthwaite")
@@ -838,7 +876,7 @@ emmeans(MRT13, pairwise ~nback * ILI,  lmer.df = "satterthwaite")
 emmeans(MRT13, pairwise ~nback * paradigm,  lmer.df = "satterthwaite")
 emmeans(MRT13, pairwise ~paradigm * ILI,  lmer.df = "satterthwaite")
 
- 
+ AIC(MRT13)
 
 #Does MRT13 meet assumptions ?
 
@@ -961,6 +999,7 @@ data <- Nback_blocks  #15677
 
 M1 <-lmer(relative_timing ~ duration + (1|PID), data=data, REML=FALSE)
 
+anova(M1)
 M2 <-lmer(relative_timing ~ duration + nback + (1|PID), data=data, REML=FALSE)
 lrtest(M1, M2) #M1 nested #M2 more complex   p <0.05***  #the complex model is significantly more accurate
 
@@ -970,22 +1009,14 @@ lrtest(M2, M3) #M2 nested #M3 more complex  p > 0.05  #the complex model is not 
 M4 <-lmer(relative_timing ~ duration + nback + ILI:nback + (1|PID), data=data, REML=FALSE)
 lrtest(M2, M4)   #M2 nested #M4 more complex      p <0.05*  #the complex model is significantly more accurate (no interaction between ILI and other factors were found)
 
-M5 <-lmer(relative_timing ~ duration + nback +  ILI:nback + dprime + (1|PID), data=data, REML=FALSE)
+M5 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + (1|PID), data=data, REML=FALSE)
 lrtest(M4, M5)  #M4 nested #5 more complex    p < 0.05***  #the complex model is significantly more accurate    
-
-
-compare_performance(M1,M2,M3,M4,M5, M6, M7, M8)
-
 
 M6 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + (1|PID), data=data, REML=FALSE)
 lrtest(M5, M6)   #M5 nested #6 more complex   p < 0.05*  #the complex model is  not significantly more accurate
 
-
-
 M7 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + Session + (1|PID), data=data, REML=FALSE)
 lrtest(M6, M7)   #M6 nested #7 more complex   p < 0.05*** #the complex model is significantly more accurate
-
-
 
 M8 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + Session + paradigm + (1|PID), data=data, REML=FALSE)
 lrtest(M7, M8)   #M7 nested #8 more complex   p > 0.05  #the complex model is not significantly more accurate
@@ -993,7 +1024,6 @@ lrtest(M7, M8)   #M7 nested #8 more complex   p > 0.05  #the complex model is no
 
 M9 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + Session + paradigm:duration + (1|PID), data=data, REML=FALSE)
 lrtest(M7, M9)   #M4 nested #7 more complex    p < 0.05*** #the complex model is significantly more accurate, supplementary interactions between paradigm and other factors were not found
-
 
 M10 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + Session + paradigm:duration + dprime:logbeta + (1|PID), data=data, REML=FALSE)
 lrtest(M9, M10)   #MÇ nested #10 more complex   p < 0.05**, no other interaction between logbeta and other factors
@@ -1004,7 +1034,6 @@ lrtest(M10, M11)   # p < 0.05*   but no interaction found between WM Load and du
 M12 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + Session + paradigm:duration + dprime:duration + dprime:logbeta + dprime:nback +(1|PID), data=data, REML=FALSE)
 lrtest(M11, M12)   # p < 0.05** no interaction between dprime and Paradigm, session or ILI
 
-^
 
 
 #Testing multicollinearity (without the interaction terms that could inflate the variance inflation factor (the VIF)
@@ -1017,17 +1046,20 @@ check_collinearity(M12b) #OK, low correlation
 #Testing random effects
 
 M13 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + Session + paradigm:duration + dprime:duration + dprime:logbeta + dprime:nback + (nback|PID), data=data, REML=FALSE)
-lrtest(M12, M13)   # p < 0.05**
+lrtest(M12, M13)   # p < 0.05***
 
 M14 <-lmer(relative_timing ~ duration + nback + ILI:nback + dprime + logbeta + Session + paradigm:duration + dprime:duration + dprime:logbeta + dprime:nback + 
              (nback + paradigm|PID), data=data, REML=FALSE)
-lrtest(M13, M14)   # p < 0.05***    ILI, Session and were not significant and the fit was singular
+lrtest(M13, M14)   # p < 0.05***    ILI, Session and dprime were not significant and the fit was singular
 
 #add ILI, duration, d' or logbeta as a random effect slope yields in "boundary singular error" or the model failed to converge
 #Moreover, it explained only a very small part of the variance
 
 
 compare_performance(M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14) #M14 best AIC
+
+lrtest(M1, M2, M4, M5, M6, M7, M9, M10, M11, M12, M13, M14)
+
 
 
 summary(M1)
@@ -1062,6 +1094,7 @@ stargazer(M14, type = "text",
           digits = 3,
           star.cutoffs = c(0.05, 0.01, 0.001),
           digit.separator = "")
+confint(M14, oldNames=FALSE)
 
 
 
@@ -1217,120 +1250,81 @@ stat_summary(fun = mean)  +
 ##Duration graphs without ILI
 
 DD <- Nback_blocks %>%
-   group_by(Session) %>%
+   group_by(paradigm) %>%
   group_by(nback, .add =T) %>% 
-  group_by(duration, .add = T) %>% 
   summarize(DD = mean(relative_timing), 
             semDD = sem(relative_timing))
 
 
-DD2 <- Nback_blocks %>%
-   group_by(Session) %>%
-  group_by(duration, .add = T) %>% 
-  summarize(DD = mean(relative_timing), 
-            semDD = sem(relative_timing))
 
-DD_vs_ODL1 <- DD2 %>%
-  ggplot (aes(x = Session,
-                 y = DD,
-                group = duration,
-                colour = duration)) +
-  scale_y_continuous(breaks = seq(from = -35, to = 5, by = 5),
-                     limits = c(-35, 5)) +
-  geom_hline(aes(yintercept = 0), 
-             colour = 'black', 
-             size = .5, 
-             linetype = "dashed") +
-  geom_point(size = 2) +
-  geom_line(aes(group = duration), size = 1) +
-  theme_classic() +
-  labs(y = "Subjective Duration Deviation (s)", 
-       x = "Session",
-       title = "DD vs task Duration for different sessions") +
-  theme( legend.text = element_text(size = 11),
-         legend.title  = element_text(size = 12),
-          axis.text = element_text(size = 12),
-  legend.position = c(.9, .5),
-  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
-  geom_errorbar(aes(ymin = DD - semDD, ymax = DD + semDD),
-                colour = "black",
-                width = .05) +
-  scale_colour_manual(name = "Task Duration", values = cbPalette2, labels = c("45s", "90s")) 
-
-
-# jpeg("DDNbackLleg.jpg", width = 4000, height = 2500, units = "px",res=600)
-DD_vs_ODL1
-# dev.off()
-
-DD_vs_ODL2 <- DD %>%
-  ggplot (aes(x = session,
-                 y = DD,
-                group = duration,
-                colour = duration)) +
-  scale_y_continuous(breaks = seq(from = -35, to = 5, by = 5),
-                     limits = c(-35, 5)) +
-  geom_hline(aes(yintercept = 0), 
-             colour = 'black', 
-             size = .5, 
-             linetype = "dashed") +
-  geom_point(size = 2) +
-  geom_line(aes(group = duration), size = 1) +
-  theme_classic() +
-  labs(y = "Subjective Duration Deviation (s)", 
-       x = "Session",
-       title = "DD vs task Duration for different sessions and WM load") +
-  theme( legend.text = element_text(size = 11),
-         legend.title  = element_text(size = 12),
-          axis.text = element_text(size = 12),
-  legend.position = c(.5, .5),
-  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
-  geom_errorbar(aes(ymin = DD - semDD, ymax = DD + semDD),
-                colour = "black",
-                width = .05) +
-  scale_colour_manual(name = "Task Duration", values = cbPalette4, labels = c("45s", "90s")) +
-  facet_grid(.~nback)
-  
-
-# jpeg("DDNbackLleg.jpg", width = 4000, height = 2500, units = "px",res=600)
-# DD_vs_ODL2
-# dev.off()
-
-
-
-DD_vs_ODL3 <- DD %>%
+WMLoadParadigmrDE <- DD %>%
   ggplot (aes(x = nback,
-                 y = DD,
-                group = session,
-                colour = session)) +
-  scale_y_continuous(breaks = seq(from = -35, to = 5, by = 5),
-                     limits = c(-35, 5)) +
-  geom_hline(aes(yintercept = 0), 
+                 y = DD)) +
+  scale_y_continuous(breaks = seq(from = 0.70, to = 1.10, by = 0.10),
+                     limits = c(0.70, 1.10)) +
+  geom_hline(aes(yintercept = 1), 
              colour = 'black', 
              size = .5, 
              linetype = "dashed") +
   geom_point(size = 2) +
-  geom_line(aes(group = session), size = 1) +
+  geom_line(aes(group = paradigm, colour = paradigm), size = 1) +
   theme_classic() +
-  labs(y = "Subjective Duration Deviation (s)", 
-       x = "WM load",
-       title = "DD vs task Duration for different sessions and WM load") +
+  labs(y = "rDE", 
+       x = "WM Load") +
   theme( legend.text = element_text(size = 11),
          legend.title  = element_text(size = 12),
           axis.text = element_text(size = 12),
-  legend.position = c(.50, .5),
+  legend.position = c(.5, .87),
   plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
   geom_errorbar(aes(ymin = DD - semDD, ymax = DD + semDD),
                 colour = "black",
                 width = .05) +
-  scale_colour_manual(name = "Session", values = cbPalette4, labels = c("S1", "S3")) +
-  facet_grid(.~duration)
-  
+  scale_colour_manual(name = "", values = cbPalette2, labels = c("retrospective", "prospective"))
 
 
 
-# jpeg("DDNbackLleg.jpg", width = 4000, height = 2500, units = "px",res=600)
-DD_vs_ODL3
+DD <- Nback_blocks %>%
+   group_by(paradigm) %>%
+  group_by(duration, .add =T) %>% 
+  summarize(DD = mean(relative_timing), 
+            semDD = sem(relative_timing))
+
+
+
+DurationParadigmrDE <- DD %>%
+  ggplot (aes(x = duration,
+                 y = DD)) +
+  scale_y_continuous(breaks = seq(from = 0.70, to = 1.10, by = 0.10),
+                     limits = c(0.70, 1.10)) +
+  geom_hline(aes(yintercept = 1), 
+             colour = 'black', 
+             size = .5, 
+             linetype = "dashed") +
+  geom_point(size = 2) +
+  geom_line(aes(group = paradigm, colour = paradigm), size = 1) +
+  theme_classic() +
+  labs(y = "rDE", 
+       x = "Task Duration") +
+  theme( legend.text = element_text(size = 11),
+         legend.title  = element_text(size = 12),
+          axis.text = element_text(size = 12),
+  legend.position = c(.5, .87),
+  plot.title = element_text(face = "bold", "hjust" = 0.5), axis.title= element_text(size = 13)) +
+  geom_errorbar(aes(ymin = DD - semDD, ymax = DD + semDD),
+                colour = "black",
+                width = .05) +
+  scale_colour_manual(name = "", values = cbPalette2, labels = c("retrospective", "prospective"))
+
+
+# jpeg("WMLoadParadigmrDE.jpg", width = 2500, height = 2500, units = "px",res=600)
+WMLoadParadigmrDE
 # dev.off()
+
+
+# jpeg("DurationParadigmrDE.jpg", width = 2500, height = 2500, units = "px",res=600)
+DurationParadigmrDE
+# dev.off()
+
 ```
 
 
@@ -1618,14 +1612,13 @@ m4 = clmm(likert ~ duration + ILI + nback + dprime + (1|PID), data, Hess=T, nAGQ
 lrtest(m3,m4) #p > 0.05 m4 best likelihood and AIC
 
 m5 = clmm(likert ~ duration + ILI + dprime + (1|PID), data, Hess=T, nAGQ= 7)
-lrtest(m5,m3) #p < 0.05***
-lrtest(m3,m5) #p < 0.05*** comparable likelihood ratio, but M3 better AIC than m5
+lrtest(m3,m5) # comparable likelihood ratio, but M3 better AIC than m5
 
 m6 = clmm(likert ~ duration + ILI + nback + logbeta + (1|PID), data, Hess=T, nAGQ= 7)
-lrtest(m3,m6) #p > 0.05
+lrtest(m3,m6) #p < 0.05 ***
 
 m7 = clmm(likert ~ duration + ILI + nback + logbeta + Session + (1|PID), data, Hess=T, nAGQ= 7)
-lrtest(m6,m7)  #p < 0.05** m4 best likelihood and AIC
+lrtest(m6,m7)  #p > 0.05 m4 best likelihood and AIC
 
 m8 = clmm(likert ~  duration + ILI + nback + logbeta + paradigm + (1|PID), data, Hess=T, nAGQ= 7)
 lrtest(m6,m8)  # p > 0.05***
@@ -1634,7 +1627,7 @@ m9 = clmm(likert ~ duration + ILI + nback + logbeta + paradigm + Session:paradig
 lrtest(m8,m9) # p > 0.05 
 
 m10 = clmm(likert ~ duration + ILI + nback + logbeta + paradigm + Session:duration + (1|PID), data, Hess=T, nAGQ= 7)
-lrtest(m8,m10) # p < 0.05
+lrtest(m8,m10) # p < 0.05 ***
 
 m11 = clmm(likert ~ duration + ILI + nback + logbeta + paradigm + Session:duration + Session:nback + (1|PID), data, Hess=T, nAGQ= 7)
 lrtest(m10,m11) # p < 0.05*  no interaction between Session and ILI, dprime,logbeta
@@ -1650,6 +1643,14 @@ lrtest(m12,m14) # p > 0.05 m14 not better than m12
 
 
 compare_performance(m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14) #m12, m13, m14 best AIC
+
+lrtest(m1,m2)
+lrtest(m2,m3)
+lrtest(m3,m6)
+lrtest(m6,m8)
+lrtest(m8,m10)
+lrtest(m10,m11)
+lrtest(m11,m12)
 
 
 
@@ -1672,12 +1673,16 @@ summary(m14)
 m12b <- polr(likert ~ duration + ILI + nback + logbeta + paradigm + Session:duration + Session:nback + paradigm:duration, data, Hess=T)
 summary(m12b)
 
+summary(m12)
 coeffs <- coef(summary(m12))
 p <- pnorm(abs(coeffs[, "z value"]), lower.tail = FALSE) * 2
 cbind(coeffs, "p value" = round(p,3)) #get the p-value for each effect
+confint(m12, oldNames=FALSE)
 
 exp(cbind(OR = coef(m12), ci = confint(m12))) #logit effects are difficult to interpret --> exp() to have % change
 
+
+emmeans(m12, pairwise ~ duration + paradigm)
 #cclm assumptions
 
 
@@ -1943,7 +1948,7 @@ Nback_blocks <- data %>%
                                         probs=seq.int(0,1, by=1/3))), include.lowest=TRUE),
   tertile = ifelse(tertile == "[0,0.667]", "1st     \n [0, 0.667]", as.character(tertile)),
   tertile = ifelse(tertile == "(0.667,1]", "2nd     \n (0.667, 1]", as.character(tertile)),
-  tertile = ifelse(tertile == "(1,2.67]", "3rd     \n (1, 2.67]", as.character(tertile)))
+  tertile = ifelse(tertile == "(1,2.78]", "3rd     \n (1, 2.78]", as.character(tertile)))
   
   summary(Nback_blocks)
 
@@ -1962,14 +1967,18 @@ Likert_quantile
 Likert_tertile <- Nback_blocks %>%
    filter(!is.na(likert)) %>%
   mutate(likert = fct_relevel(likert, "Very Slowly", "Slowly",  "Normally", "Quickly", "Very Quickly")) %>%
-	group_by(tertile, likert) %>%  # grouping by these two variables
+	group_by(paradigm, tertile, likert) %>%  # grouping by these two variables
 	tally() %>%  # counting the number of responses
 	mutate(perc = n / sum(n) * 100) %>%
 	dplyr::select(-n) %>%
 	group_by(tertile) %>%
-	spread(likert, perc) 
+	spread(likert, perc) %>%
+  mutate(tertile = paste(tertile, " ", paradigm)) %>%
+  ungroup() %>%
+  dplyr::select(-paradigm)
 
 Likert_tertile
+
 ```
 
 
@@ -2057,8 +2066,8 @@ ggplot() +
 		labels = c("Very Quickly", "Quickly","Normally", "Slowly", "Very Slowly")) +
   labs(x = "rDE", y ="Percentage of Respondants (%)", title = "Relative Duration Estimation vs Passage of Time Judgment") + 
 	coord_flip() + 
-  scale_y_continuous(breaks = seq(from = -70, to = 60, 10),
-                     limits = c(-70,60)) +
+  scale_y_continuous(breaks = seq(from = -70, to = 80, 10),
+                     limits = c(-70,80)) +
 	theme_classic()
 # dev.off()
 ```
@@ -2072,7 +2081,8 @@ ggplot() +
 
 #effect of relative Duration Estimation (rDE) on PoTJ likert scale
 
-data = Nback_blocks 
+data = Nback_blocks %>%
+  filter(!is.na(likert)) #15620 obs
 
 library(MASS)
 
@@ -2083,15 +2093,15 @@ mm2 = clmm(likert ~ relative_timing + relative_timing:Session + (1|PID), lin = "
 lrtest(mm1, mm2) #p > 0.05 no interaction effect between rDE and Session was found
 
 mm3 = clmm(likert ~ relative_timing + relative_timing:paradigm +(1|PID), lin = "logit", data, Hess=T, nAGQ= 7)
-lrtest(mm1, mm3) #p < 0.05*** Interaction between rDE and Session was found
+lrtest(mm1, mm3) #p < 0.05*** 
 
-mm4 = clmm(likert ~ relative_timing * paradigm +(1|PID), lin = "logit", data, Hess=T, nAGQ= 7)
-lrtest(mm3, mm4)
+
+lrtest(mm1, mm2, mm3)
+AIC(mm1, mm2, mm3)
+
 
 summary(mm3)
-
-emmeans(mm3, pairwise ~ paradigm + relative_timing , at = list(relative_timing = c(-0.33, 0.66, 1, 1.33, 1.66)))
-
+  confint(mm3, oldNames=FALSE)
 coeffs <- coef(summary(mm3))
 p <- pnorm(abs(coeffs[, "z value"]), lower.tail = FALSE) * 2
 cbind(coeffs, "p value" = round(p,3)) #get the p-value for each effect
@@ -2100,8 +2110,10 @@ exp(cbind(OR = coef(mm3), ci = confint(mm3))) #logit effects are difficult to in
 # newdat <- data.frame(nback =c(,1))
 # (phat <- predict(object = m, newdat, type="p"))
 
-
-
+summary(mm3)
+emmeans(mm3,  ~ relative_timing , at = list(relative_timing = c(0.33, 0.66, 1, 1.33, 1.66)))
+emmeans(mm3, pairwise ~ paradigm + relative_timing , at = list(relative_timing = c(0.33, 0.66, 1, 1.33, 1.66)))
+emmeans(mm3, pairwise ~ paradigm + relative_timing , at = list(relative_timing = c(0.33, 0.8, 1.5, 2.3)))
 
 ##Proportional odds assumption
 require(Hmisc)
